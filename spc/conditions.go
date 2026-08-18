@@ -34,9 +34,15 @@ const (
 // dropped, and a rule set that is empty after that means all eight.
 //
 // The alternative — a condition that is silently and permanently false — is
-// the worst failure mode an alerting library has, and the engine offers no
-// logger through which to announce one. Clamping is loud in the only place it
-// can be: MinPoints, and this documentation.
+// the worst failure mode an alerting library has. The engine does have a
+// logger (alarm.WithLogf) and does warn at SetRules when a condition's
+// MinPoints exceeds the window cap, so an invalid argument could have been
+// encoded as an unsatisfiable point count to reach it. That was rejected:
+// the resulting warning says a condition needs five thousand observations,
+// which is not the same information as "your lambda was out of range", and
+// it deliberately installs a rule that can never fire. Clamping keeps the
+// condition working, and String reports the effective configuration, so a
+// caller who logs the rule they built sees what was changed.
 
 // conditionBase binds a baseline to the split between the reference
 // observations and the observations under test. Both conditions embed it, and

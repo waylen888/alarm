@@ -228,8 +228,10 @@
 // # Metrics these do not work on
 //
 // A baseline that cannot produce a dispersion estimate reports false, and the
-// condition is then never true — silently, because the engine has no logger.
-// Two common metric shapes do this:
+// condition is then never true. Nothing announces this: the engine warns at
+// SetRules about a condition whose MinPoints cannot fit in a window, but a
+// baseline that declines to estimate on every evaluation looks exactly like a
+// process that is in control. Two common metric shapes do this:
 //
 //   - A metric that is usually constant. StdDev of a constant reference
 //     period is zero, so Trailing is dead on a queue depth pinned at zero, a
@@ -250,7 +252,35 @@
 // Constructors never return an error and never panic. An argument outside its
 // valid range is clamped to the nearest value inside it, and one whose range
 // is open at the offending end is replaced by a documented default. The
-// engine offers no logger through which a condition could report that it had
-// been built unusable, so the alternative to clamping is a condition that is
-// silently never true.
+// alternative is a condition that is never true, which is the failure mode
+// this package is organised to avoid.
+//
+// Because a constructor returns an alarm.Condition, the value it produced is
+// otherwise opaque. Both conditions implement String and report their
+// effective configuration, including anything that was clamped; log the rule
+// you built, or print it in a test, and a mistyped lambda is visible.
+//
+// # Reporting which rule fired
+//
+// alarm.Event carries a single float64, so a condition that judges several
+// rules at once cannot say which of them fired. Give each rule its own
+// alarm.Level rather than bundling them into one condition:
+//
+//	Levels: []alarm.Level{
+//		{Severity: alarm.SeverityError, Condition: spc.Nelson(b, 50, spc.Rule1)},
+//		{Severity: alarm.SeverityWarn,  Condition: spc.Nelson(b, 50, spc.Rule2)},
+//	}
+//
+// The engine sizes a rule's window from the largest MinPoints among all its
+// levels, so the levels share one window rather than one each, and Severity
+// then identifies what fired — which is also the granularity triage wants,
+// since a gross excursion and a slow trend do not deserve the same response.
+// The limitation is that only the highest level that holds is reported, so
+// order the severities the way you would order the pages.
+//
+// The centre line and sigma a breach was judged against are not recoverable
+// from the event at all. A sigma distance is scale-free by construction, and
+// three sigma means something different when sigma is two milliseconds and
+// when it is four hundred. Attach whatever context the handler needs with
+// alarm.ObserveMeta.
 package spc

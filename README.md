@@ -350,9 +350,12 @@ Worth knowing before reaching for it:
   in the middle of the incident, carrying a near-zero sigma distance as its evidence. Set
   `ClearFor` to at least as long as you expect an incident to last, and do not template a
   recovery message off `Event.Value`. `Fixed` has no such behaviour.
-- **Name the rules you want.** Naming none enables all eight, which false-alarms roughly
-  once every 31 observations on an in-control process. Rule 7 is a baseline-maintenance
-  signal and does not belong in a paging rule.
+- **Name the rules you want, one per `Level`.** Naming none enables all eight, which
+  false-alarms roughly once every 31 observations on an in-control process, and rule 7 is
+  a baseline-maintenance signal that does not belong in a paging rule. Give each rule its
+  own `alarm.Level`: `Event` carries a single float, so bundling several rules into one
+  condition loses which of them fired, while levels share one window and let `Severity`
+  say so.
 - **The observations under test are never part of their own baseline.** The `Baseline`
   interface only ever receives the reference observations, so the exclusion is structural
   on any single evaluation.

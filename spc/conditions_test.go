@@ -331,6 +331,60 @@ func TestWindowSizingThroughTheEngine(t *testing.T) {
 	t.Logf("fired with value (sigma distance) %.3f", fired[0].Value)
 }
 
+// The documented way to tell which rule fired: one alarm.Level per rule.
+// The engine sizes a rule's window from the largest MinPoints among its
+// levels, so the levels share one window rather than one each, and Severity
+// identifies what fired.
+func TestOneLevelPerRuleIdentifiesWhatFired(t *testing.T) {
+	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	var fired []alarm.Event
+	engine := alarm.New(func(ev alarm.Event) { fired = append(fired, ev) },
+		alarm.WithClock(func() time.Time { return now }))
+
+	engine.SetRules([]alarm.Rule{{
+		ID: "spc",
+		Levels: []alarm.Level{
+			{Severity: alarm.SeverityError, Condition: spc.Nelson(spc.Trailing(30), 30, spc.Rule1)},
+			{Severity: alarm.SeverityWarn, Condition: spc.Nelson(spc.Trailing(30), 30, spc.Rule2)},
+		},
+		StaleAfter:  -1,
+		VanishAfter: -1,
+	}})
+
+	observe := func(v float64) {
+		engine.Observe("spc", "k", v, now)
+		now = now.Add(time.Second)
+	}
+	jitter := []float64{0.3, -0.5, 0.8, -0.2, 0.1, -0.9, 0.6, -0.4}
+	for i := 0; i < 39; i++ {
+		observe(100 + jitter[i%len(jitter)])
+	}
+	if len(fired) != 0 {
+		t.Fatalf("a steady process should not fire: %v", fired)
+	}
+
+	// Nine samples a little above the centre: rule 2, and nothing near 3σ.
+	for i := 0; i < 9; i++ {
+		observe(100.9)
+	}
+	if len(fired) == 0 {
+		t.Fatal("a nine-point shift should have fired rule 2's level")
+	}
+	if got := fired[0].Severity; got != alarm.SeverityWarn {
+		t.Errorf("first event severity = %v, want warn — the level identifies the rule", got)
+	}
+
+	// A gross excursion: rule 1's level is higher and takes over.
+	observe(140)
+	last := fired[len(fired)-1]
+	if last.Severity != alarm.SeverityError {
+		t.Errorf("after a gross excursion severity = %v, want error; events: %v", last.Severity, fired)
+	}
+	if last.Kind != alarm.EventEscalate {
+		t.Errorf("last event kind = %v, want escalate", last.Kind)
+	}
+}
+
 // seriesWindow builds an alarm.Window over vals, one second apart, by feeding
 // them through an engine and capturing the window the condition receives.
 // Going through the engine rather than a hand-written fake keeps the tests
