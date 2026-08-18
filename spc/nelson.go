@@ -40,6 +40,9 @@ const (
 	Rule7
 	// Rule8 fires on eight consecutive points, on both sides of the centre
 	// line, with none within one sigma: a mixture of two populations.
+	//
+	// Minitab's test 8 drops the both-sides requirement; Nelson's does not,
+	// and neither does this. See the note on mixture.
 	Rule8
 )
 
@@ -94,7 +97,7 @@ func (r Rule) String() string {
 type Violation struct {
 	Rule  Rule
 	Index int     // index into the series where the rule completed
-	Z     float64 // sigma distance of the point at Index
+	Z     float64 // sigma distance of the triggering point, the observation at Index
 }
 
 // Check applies the named rules to series against the given centre line and
@@ -239,25 +242,50 @@ func (c chart) alternating(lo, hi int) bool {
 }
 
 // kOfNBeyond reports whether at least k points in the window lie beyond
-// mult sigma on the same side of the centre line. Rules 5 and 6.
+// mult sigma on the same side of the centre line, counting only the side the
+// window's last point is on. Rules 5 and 6.
+//
+// The last point must itself be beyond the limit. Without that gate the rule
+// completes at a point that is comfortably in control — two of three beyond
+// two sigma is satisfied by a series that went out twice and has since
+// recovered — and the violation then reports the sigma distance of an
+// observation that triggered nothing. It also keeps a condition breaching
+// for up to k-1 observations after the process came back, which is the
+// stickiness the "fires only at the newest observation" rule exists to
+// prevent. The qualifying points need not be adjacent, and Nelson does not
+// require them to be; requiring the last one is the convention every
+// published implementation follows, because it is the point being charted.
 func (c chart) kOfNBeyond(lo, hi int, mult float64, k int) bool {
-	above, below := 0, 0
+	var want int
+	switch z := c.z(hi - 1); {
+	case z > mult:
+		want = 1
+	case z < -mult:
+		want = -1
+	default:
+		return false
+	}
+	n := 0
 	for i := lo; i < hi; i++ {
-		switch z := c.z(i); {
-		case z > mult:
-			above++
-		case z < -mult:
-			below++
+		z := c.z(i)
+		if (want > 0 && z > mult) || (want < 0 && z < -mult) {
+			n++
 		}
 	}
-	return above >= k || below >= k
+	return n >= k
 }
 
 // allWithin reports whether every point in the window lies within one sigma
 // of the centre line. Rule 7.
+//
+// A point at exactly one sigma counts as within, which is the same
+// convention rule 1 uses for the three-sigma limit and the complement of the
+// one mixture uses. The two rules partition the same band, so they must
+// agree on its edge: with the boundary counted as outside here and as inside
+// there, a series sitting exactly on one sigma satisfied neither rule.
 func (c chart) allWithin(lo, hi int) bool {
 	for i := lo; i < hi; i++ {
-		if math.Abs(c.z(i)) >= 1 {
+		if math.Abs(c.z(i)) > 1 {
 			return false
 		}
 	}
@@ -269,9 +297,16 @@ func (c chart) allWithin(lo, hi int) bool {
 //
 // The both-sides requirement is Nelson's, and it is what separates rule 8
 // from an ordinary sustained shift: eight points more than one sigma out on
-// a single side is a shift, already reported by rules 2 and 6. Eight points
-// straddling the centre with a hole around it is two populations being
-// sampled alternately.
+// a single side is a shift, and rule 6 has already reported it three
+// observations earlier — four of five beyond one sigma on one side is
+// implied by eight of eight. Eight points straddling the centre with a hole
+// around it is two populations being sampled alternately, which is a
+// different fault with a different remedy.
+//
+// Minitab's test 8 omits the both-sides clause; JMP and the Nelson lineage
+// keep it. A reader cross-checking against Minitab will see this package
+// report fewer rule 8 violations, and the difference is exactly the
+// one-sided runs rule 6 already covers.
 func (c chart) mixture(lo, hi int) bool {
 	above, below := false, false
 	for i := lo; i < hi; i++ {

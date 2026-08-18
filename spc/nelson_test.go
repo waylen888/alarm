@@ -129,6 +129,12 @@ func TestRule5(t *testing.T) {
 	wantIndices(t, check([]float64{0, 2.5, -2.5}, Rule5)) // opposite sides do not combine
 	wantIndices(t, check([]float64{0, 2.5, 1.9}, Rule5))  // only one beyond 2σ
 	wantIndices(t, check([]float64{0, 2.0, 2.0}, Rule5))  // exactly 2σ is inside
+
+	// The point the rule completes at must itself be beyond the limit.
+	// Otherwise the rule fires on a process that has already recovered, and
+	// reports the sigma distance of an observation that triggered nothing.
+	wantIndices(t, check([]float64{2.5, 2.5, 0.1}, Rule5))
+	wantIndices(t, check([]float64{2.5, 2.5, -2.5}, Rule5)) // beyond, but the other side
 }
 
 // Rule 6: four of five consecutive points beyond one sigma, same side.
@@ -138,6 +144,11 @@ func TestRule6(t *testing.T) {
 	wantIndices(t, check([]float64{1.5, 1.5, 0.5, 0.5, 1.5}, Rule6)) // only three
 	wantIndices(t, check([]float64{1.5, 1.5, -1.5, 1.5, -1.5}, Rule6))
 	wantIndices(t, check([]float64{1.5, 1.5, 1.5, 1.5}, Rule6)) // four points
+
+	// As for rule 5: four of the five are beyond one sigma, but the point the
+	// rule would complete at is in control.
+	wantIndices(t, check([]float64{1.5, 1.5, 1.5, 1.5, 0.1}, Rule6))
+	wantIndices(t, check([]float64{1.5, 1.5, 1.5, 1.5, -1.5}, Rule6))
 }
 
 // Rule 7: fifteen consecutive points all within one sigma.
@@ -149,9 +160,11 @@ func TestRule7(t *testing.T) {
 	broken[9] = 1.2
 	wantIndices(t, check(broken, Rule7))
 
+	// A point at exactly one sigma counts as within it, matching rule 1's
+	// treatment of the three-sigma limit and complementing rule 8.
 	edge := alternate(15, 0.2)
-	edge[9] = 1.0 // exactly one sigma is not within one sigma
-	wantIndices(t, check(edge, Rule7))
+	edge[9] = 1.0
+	wantIndices(t, check(edge, Rule7), 14)
 }
 
 // Rule 8: eight consecutive points, on both sides, none within one sigma.
@@ -168,9 +181,22 @@ func TestRule8(t *testing.T) {
 	wantIndices(t, check(edge, Rule8))
 
 	// Nelson's rule 8 requires both sides. Eight points a long way out on one
-	// side is a sustained shift, which rules 2 and 6 already report; calling
-	// it a mixture would be wrong.
+	// side is a sustained shift, which rule 6 already reports three
+	// observations earlier; calling it a mixture would be wrong.
 	wantIndices(t, check(repeat(8, 1.5), Rule8))
+}
+
+// Rules 7 and 8 partition the same one-sigma band, so a series sitting
+// exactly on the boundary must satisfy one of them. It used to satisfy
+// neither.
+func TestRules7And8AgreeOnTheOneSigmaBoundary(t *testing.T) {
+	onTheLine := repeat(15, 1.0)
+	if len(check(onTheLine, Rule7)) == 0 {
+		t.Error("fifteen points at exactly one sigma should be within one sigma")
+	}
+	if len(check(alternate(8, 1.0), Rule8)) != 0 {
+		t.Error("eight points at exactly one sigma are within one sigma, so rule 8 must not fire")
+	}
 }
 
 func TestCheckDefaultsToAllRules(t *testing.T) {
