@@ -37,6 +37,12 @@ const (
 	// often means the baseline's sigma is stale and too wide — the process
 	// became quieter than the limits still describe — and the useful response
 	// is to re-estimate the baseline, not to page anyone.
+	//
+	// That reading applies to Fixed. Over a trailing baseline sigma is
+	// re-estimated on every evaluation, so rule 7 is really asking whether
+	// the period just before the test points was noisier than the test points
+	// themselves — which any heteroscedastic metric answers yes to regularly.
+	// Keep it out of a paging rule either way.
 	Rule7
 	// Rule8 fires on eight consecutive points, on both sides of the centre
 	// line, with none within one sigma: a mixture of two populations.

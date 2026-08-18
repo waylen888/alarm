@@ -90,9 +90,25 @@ func (b fixed) Estimate([]float64) (float64, float64, bool) {
 //
 // The metric supplies its own normal range, which is what makes this usable
 // on a series whose level nobody wrote down. The cost is that the estimate is
-// only as clean as the reference period: one spike in it inflates sigma
-// enough to hide a real shift. Use TrailingRobust when that is a realistic
-// worry, which for monitoring data it usually is.
+// only as clean as the reference period, and it is dirty in two different
+// ways:
+//
+//   - One spike inflates sigma enough to hide a real shift. Use
+//     TrailingRobust when that is a realistic worry, which for monitoring
+//     data it usually is.
+//   - Any drift, ramp or cycle inside the reference period is absorbed into
+//     sigma as if it were noise, because a sample standard deviation is a
+//     global measure of dispersion and cannot tell level variation from
+//     scatter. On a metric with a daily cycle — the case this package exists
+//     for — that inflation is present on essentially every evaluation, and it
+//     desensitises every rule. Classic individuals-chart practice estimates
+//     sigma from the mean moving range instead, MR/1.128, precisely because a
+//     local estimate is blind to level. TrailingRobust does not fix this:
+//     median and MAD are equally global, and resist outliers rather than
+//     drift.
+//
+// Both baselines here are therefore conservative on a cyclical metric: they
+// under-report rather than over-report.
 func Trailing(n int) Baseline { return trailing{n: atLeast(n, 2)} }
 
 type trailing struct{ n int }
@@ -129,6 +145,15 @@ func (b trailing) Estimate(ref []float64) (float64, float64, bool) {
 // noisier estimator of σ than the sample standard deviation, so Trailing
 // detects marginally sooner. Reference periods drawn from production
 // monitoring data are rarely clean.
+//
+// Two cautions. MAD·MADScale is biased low at small n — by roughly 10% at
+// n=10 and 2% at n=50 — and no finite-sample correction is applied here, so a
+// small n gives limits that are slightly too tight and a false-alarm rate
+// slightly above nominal. Prefer n of 50 or more. And MAD is zero whenever
+// more than half the reference observations share a value, which for a
+// low-cardinality integer metric is the normal case rather than a corner one;
+// Estimate then reports false and the condition is never true. See the
+// package documentation on metrics these conditions do not work on.
 func TrailingRobust(n int) Baseline { return trailingRobust{n: atLeast(n, 2)} }
 
 type trailingRobust struct{ n int }

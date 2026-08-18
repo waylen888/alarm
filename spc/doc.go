@@ -5,8 +5,18 @@
 // The motivating case is a metric with a strong daily cycle. In a trading
 // system a ten-fold spike at 09:00 is the market opening, and the same value
 // at 11:00 is an incident. A fixed threshold is wrong at every hour except
-// the one it was tuned for. A control chart asks a better question: is this
-// sample consistent with this metric's own recent behaviour?
+// the one it was tuned for. A control chart asks a different question: is
+// this sample consistent with this metric's own recent behaviour?
+//
+// Be clear about what that buys and what it does not. A trailing baseline
+// detects *changes*, never *levels*, so it needs no per-hour tuning and it
+// works on a metric whose normal range nobody wrote down. But the market
+// opening is a change too. These conditions will report it, and they cannot
+// tell it apart from an incident of the same shape; separating "this happens
+// every day at 09:00" from "this has never happened before" requires a
+// seasonal baseline, which is out of scope below. What this package removes
+// is the need to know the level in advance. What it does not remove is the
+// need to silence changes you expect.
 //
 // Two conditions are exported, both satisfying alarm.Condition:
 //
@@ -109,6 +119,131 @@
 // Special Causes", Journal of Quality Technology 16(4), 1984. Nothing here is
 // novel; they are a published standard, which is exactly why they are worth
 // implementing exactly.
+//
+// # How long a breach lasts
+//
+// This is the most important operational property here, and it is a direct
+// consequence of the trailing baselines: a step change enters the reference
+// period roughly `test` observations after it starts, and has taken the
+// reference period over entirely after `ref + test`. At that point the
+// incident is the new normal, the chart reads in control, and the condition
+// goes false — with the metric still at its shifted level.
+//
+// So a breach against Trailing or TrailingRobust lasts on the order of `ref`
+// observations, whatever the incident does. In wall-clock terms that is `ref`
+// times the sampling interval. The engine will then emit a Resolve, and its
+// Event.Value will be a sigma distance near zero, measured against a centre
+// line that has followed the incident. It is a false all-clear, and it will
+// look authoritative.
+//
+// Two consequences for anyone wiring this to a pager:
+//
+//   - Set Rule.ClearFor to at least as long as you expect an incident to
+//     last. It is what holds the alert up after the condition goes quiet, and
+//     for these conditions it is a requirement rather than a refinement.
+//   - Do not template a recovery notification off Event.Value. For a step
+//     change it describes the baseline, not the process.
+//
+// Fixed does not have this property, because its centre line cannot move. If
+// what you need is "tell me while the metric is bad" rather than "tell me
+// when the metric changes", Fixed — or an ordinary alarm.Threshold — is the
+// right tool and a trailing baseline is the wrong one.
+//
+// # Sampling, gaps and time
+//
+// These conditions never read Point.Time. Every judgement is a point count,
+// so `ref` is "the preceding 50 observations" and not "the preceding eight
+// minutes". The mapping between the two is the caller's, and it is silent: if
+// a scrape degrades from 10s to 5m, Trailing(50) quietly stops describing
+// eight minutes and starts describing four hours, which for a metric with a
+// daily cycle is a different process. Set Rule.StaleAfter to a small multiple
+// of the expected sampling interval so a degraded feed becomes Stale rather
+// than reinterpreting the reference period.
+//
+// After any gap the window must refill before the condition can be true
+// again, which takes MinPoints observations — 65 of them for rule 7 over
+// Trailing(50). The engine's StaleRecover event fires on the first returning
+// observation, well before that. There is no event for "back, but not yet
+// able to judge".
+//
+// Leave Rule.KeepWindowOnStale at its default of false. Because the
+// conditions ignore timestamps, keeping the window across a gap builds a
+// chart whose reference period is the process before the gap and whose test
+// points are the process after it — which reports every deploy as a shift.
+//
+// # For and Fingerprint
+//
+// Rule.For must be shorter than `ref` times the sampling interval. That
+// product is the entire span for which one of these conditions can be
+// continuously true, so a longer For yields a rule that never fires at all,
+// and nothing warns about it. This is worth care because For is the obvious
+// knob to reach for against the false-alarm rate below.
+//
+// Rule.Fingerprint is unnecessary while For is zero or less: observations are
+// raw measurements, all judgement lives in the condition, and a hot reload
+// simply re-judges the existing window. Once For is positive it is required,
+// for the reason the parent package documents — the pending start time is
+// accrued state, so a condition swap would otherwise inherit elapsed time
+// from the condition it replaced. Encode the baseline, the rule set, lambda
+// and L.
+//
+// # How often these fire when nothing is wrong
+//
+// Every rule has a false-alarm rate, and running several multiplies it.
+// Champ and Woodall (Technometrics 29(4), 1987) give the exact result for the
+// four standard Western Electric rules run together: an in-control ARL of
+// 91.75, against 370.4 for a three-sigma limit alone. Nelson's eight include
+// those four and four more.
+//
+// Measured over 400,000 in-control observations of a normal process, judged
+// the way these conditions judge — a rule breaches when it completes at the
+// newest observation, evaluated on every observation:
+//
+//	rule 1, Fixed baseline           one false breach every 373 observations
+//	rule 1, Trailing(50)             one every 222
+//	rule 2, Trailing(50)             one every 170
+//	rule 7, Trailing(50)             one every 236
+//	rules 1 and 2, Trailing(50)      one every  96
+//	all eight, Trailing(50)          one every  31
+//
+// At a ten-second sampling interval, all eight rules is a false breach every
+// five minutes, per key. Naming no rules enables all eight, so the shortest
+// call is also the noisiest; name the rules you want. Rule 7 in particular is
+// a baseline-maintenance signal — its own documentation says the useful
+// response is to re-estimate, not to page — and it does not belong in a
+// paging rule alongside rule 1.
+//
+// Two further effects visible in that table. A trailing baseline is itself
+// estimated, and the estimation error adds variance the limits do not account
+// for, which is why rule 1 over Trailing(50) false-alarms two-thirds more
+// often than the textbook 370.4 the same rule achieves against a known
+// baseline; Quesenberry (Journal of Quality Technology 25(4), 1993) puts the
+// reference size needed for individuals limits to behave like known-parameter
+// limits at the order of 300 observations. And the rules assume independent
+// observations. Monitoring data sampled at second-to-minute granularity is
+// usually autocorrelated, which inflates the run-based rules (2, 3, 6, 7) and
+// EWMA considerably beyond the numbers above. Sampling at an interval longer
+// than the metric's autocorrelation time is the practical mitigation.
+//
+// # Metrics these do not work on
+//
+// A baseline that cannot produce a dispersion estimate reports false, and the
+// condition is then never true — silently, because the engine has no logger.
+// Two common metric shapes do this:
+//
+//   - A metric that is usually constant. StdDev of a constant reference
+//     period is zero, so Trailing is dead on a queue depth pinned at zero, a
+//     healthy error counter, or a saturated gauge.
+//   - A low-cardinality integer metric. MAD is zero as soon as more than half
+//     the reference observations share a value, so TrailingRobust is dead on
+//     a mostly-zero error count — which is one of the most commonly alerted
+//     metric shapes there is.
+//
+// These conditions are for metrics that are always noisy. For a metric that
+// is usually flat and occasionally not, an alarm.Threshold is the right tool,
+// and it is a better one. The String method on both conditions reports the
+// effective configuration, which is the quickest way to check what a
+// constructor actually built.
 //
 // # Arguments
 //

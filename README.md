@@ -322,6 +322,12 @@ incident; a fixed limit is wrong at every hour except the one it was tuned for.
 `spc` supplies control-chart conditions that ask a different question — is this sample
 consistent with this metric's own recent behaviour?
 
+Be clear about what that buys. A trailing baseline detects *changes*, never *levels*, so
+it needs no per-hour tuning and works on a metric whose normal range nobody wrote down.
+But the market opening is a change too, and these conditions report it. What goes away is
+having to know the level in advance; what does not is having to silence the changes you
+expect.
+
 Two conditions, both ordinary `alarm.Condition` values:
 
 ```go
@@ -336,26 +342,37 @@ line and dispersion come from a `Baseline`: `Fixed` for a known normal range, `T
 for mean and standard deviation over the preceding observations, `TrailingRobust` for
 median and MAD when the reference period may contain spikes.
 
-Three things are worth knowing before reaching for it:
+Worth knowing before reaching for it:
 
-- **The observations under test are never part of their own baseline.** A sustained shift
-  allowed into its own centre line makes the chart blind to itself. The `Baseline`
-  interface only ever receives the reference observations, so the exclusion is structural.
-- **The statistic's memory is the window's length.** Conditions must be stateless, so the
-  statistic is recomputed from the window on every evaluation. `MinPoints` is derived, not
-  guessed: for EWMA it is the point count at which the observations a bounded window drops
-  are worth under one percent.
+- **A breach against a trailing baseline lasts about `ref` observations.** A sustained
+  shift enters its own reference period as it scrolls, and once it has taken the period
+  over, the chart reads in control with the metric still shifted — so the alert resolves
+  in the middle of the incident, carrying a near-zero sigma distance as its evidence. Set
+  `ClearFor` to at least as long as you expect an incident to last, and do not template a
+  recovery message off `Event.Value`. `Fixed` has no such behaviour.
+- **Name the rules you want.** Naming none enables all eight, which false-alarms roughly
+  once every 31 observations on an in-control process. Rule 7 is a baseline-maintenance
+  signal and does not belong in a paging rule.
+- **The observations under test are never part of their own baseline.** The `Baseline`
+  interface only ever receives the reference observations, so the exclusion is structural
+  on any single evaluation.
+- **These are point counts, not durations.** Nothing reads the timestamps, so `ref` means
+  "the preceding 50 observations". `For` must be shorter than `ref` times the sampling
+  interval or the rule can never fire; leave `KeepWindowOnStale` false.
 - **`MinPoints` counts both halves.** Rule 7 over a `Trailing(50)` baseline reads 65
   observations and declares 65. The subpackage handles this; a hand-rolled condition that
   forgets it is silently never true.
+- **The metric has to be noisy.** A baseline that cannot estimate a dispersion leaves the
+  condition silently never true — which a constant queue depth does to `Trailing`, and a
+  mostly-zero integer counter does to `TrailingRobust`. Use a threshold for those.
 
 The statistics layer — `Mean`, `StdDev`, `Median`, `MAD`, the baselines, `Check`,
 `EWMAStat` — operates on `[]float64` and does not import `alarm`. It is usable on its own.
 Zero dependencies, same as the parent.
 
-CUSUM, seasonal baselines, subgrouped charts and capability indices are deliberately not
-here; see the [package documentation](https://pkg.go.dev/github.com/waylen888/alarm/spc)
-for why.
+CUSUM and seasonal baselines are deliberately not here; see the
+[package documentation](https://pkg.go.dev/github.com/waylen888/alarm/spc) for why, and
+for the measured false-alarm rates.
 
 ---
 

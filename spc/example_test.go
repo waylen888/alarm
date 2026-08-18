@@ -10,8 +10,17 @@ import (
 
 // A metric with no fixed normal range, judged against its own recent
 // behaviour. The baseline is estimated from the 30 observations preceding the
-// ones under test, so the shift cannot quietly become part of what counts as
-// normal.
+// ones under test, so the shift cannot pollute the limits it is judged
+// against on any single evaluation.
+//
+// The rule is shaped the way a paging rule has to be. The rules are named
+// rather than defaulted, because naming none enables all eight and that
+// false-alarms roughly once every 31 observations. ClearFor is set longer
+// than an incident is expected to last, because a trailing baseline follows
+// a sustained shift into the reference period and the condition goes quiet
+// again after about ref observations whether or not anything was fixed.
+// StaleAfter is a small multiple of the sampling interval, so a degraded
+// feed becomes Stale instead of silently stretching what "recent" means.
 func Example() {
 	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 
@@ -27,8 +36,9 @@ func Example() {
 			// sustained shift that never comes close to a three-sigma limit.
 			Condition: spc.Nelson(spc.TrailingRobust(30), 30, spc.Rule2),
 		}},
-		StaleAfter:  -1,
-		VanishAfter: -1,
+		ClearFor:    15 * time.Minute,
+		StaleAfter:  5 * time.Second,
+		VanishAfter: time.Hour,
 	}})
 
 	observe := func(v float64) {
