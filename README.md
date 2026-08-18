@@ -637,7 +637,18 @@ If you change this package, these properties must still hold:
    swapping safe.
 6. **Never alerted means silent.** A key that has never been Firing emits nothing, whether it
    disappears or its rule is deleted.
-7. **Standard library only.** No dependencies, ever.
+7. **The window's upper time bound is asymmetric.** `Points` and `Count` exclude observations
+   later than the moment of evaluation; `Last` and `LastN` do not, and return the newest
+   points held regardless. Nothing is currently evaluated in the past — invariant 3 is what
+   guarantees that — so the difference is unobservable through the engine. It is not
+   unobservable through `Condition`, which is a public extension point: a condition must not
+   assume `Last`/`LastN` are bounded the way `Points`/`Count` are. Either bound both ends
+   here, or leave invariant 3 intact.
+8. **Window capacity grows but never shrinks.** Reinstalling a rule whose conditions need
+   fewer points leaves the existing window at its larger capacity. This is intended: a window
+   that is too large only costs memory, whereas one that is too small silently prevents a
+   condition from ever breaching.
+9. **Standard library only.** No dependencies, ever.
 
 ---
 

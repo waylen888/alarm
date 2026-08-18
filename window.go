@@ -13,10 +13,13 @@ type Point struct {
 // event-style conditions such as CountInWindow decay as time advances and are
 // released by Engine.Tick.
 type Window interface {
-	// Last returns the most recent observation.
+	// Last returns the most recent observation. Unlike Points and Count it is
+	// not bounded by the moment of evaluation: it returns the newest
+	// observation held, even one timestamped after that moment.
 	Last() (Point, bool)
 	// LastN returns the most recent n observations (all of them if there are
-	// fewer), oldest first.
+	// fewer), oldest first. Like Last, and unlike Points and Count, it is not
+	// bounded by the moment of evaluation.
 	LastN(n int) []Point
 	// Points returns the observations within since of the moment of
 	// evaluation, oldest first.
