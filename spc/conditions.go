@@ -1,6 +1,7 @@
 package spc
 
 import (
+	"fmt"
 	"math"
 
 	"github.com/waylen888/alarm"
@@ -22,9 +23,6 @@ const (
 	// finite positive number. 3 mirrors the three-sigma limits of a Shewhart
 	// chart.
 	DefaultL = 3
-	// MinRefPoints is the fewest reference observations a condition will ask
-	// a baseline for. Below two there is no dispersion to estimate.
-	MinRefPoints = 2
 )
 
 // Argument handling, applied consistently by both constructors:
@@ -40,10 +38,10 @@ const (
 // logger through which to announce one. Clamping is loud in the only place it
 // can be: MinPoints, and this documentation.
 
-// chart binds a baseline to the split between the reference observations and
-// the observations under test. Both conditions embed it, and it is the single
-// place the split is performed, which is what keeps the points under test out
-// of their own baseline.
+// conditionBase binds a baseline to the split between the reference
+// observations and the observations under test. Both conditions embed it, and
+// it is the single place the split is performed, which is what keeps the
+// points under test out of their own baseline.
 type conditionBase struct {
 	b    Baseline
 	ref  int // reference observations handed to the baseline
@@ -51,9 +49,6 @@ type conditionBase struct {
 }
 
 func newBase(b Baseline, ref, test int) conditionBase {
-	if ref < MinRefPoints {
-		ref = MinRefPoints
-	}
 	ref = refPointsOf(b, ref)
 	if max := alarm.MaxWindowPoints - test; ref > max {
 		// The window cannot hold both. Clamping keeps MinPoints satisfiable;
@@ -62,11 +57,11 @@ func newBase(b Baseline, ref, test int) conditionBase {
 		// visible in MinPoints reaching the cap.
 		ref = max
 	}
-	if ref < MinRefPoints {
+	if ref < 0 {
 		// Reachable only if test alone exceeded the window, which neither
 		// constructor allows. Keeping the floor here means the split below
 		// can never be asked for a negative slice.
-		ref = MinRefPoints
+		ref = 0
 	}
 	return conditionBase{b: b, ref: ref, test: test}
 }
@@ -158,6 +153,15 @@ func (c nelson) Measure(w alarm.Window) float64 {
 	return (test[len(test)-1] - centre) / sigma
 }
 
+// String reports the effective configuration, including any value that was
+// clamped at construction. The constructors return an alarm.Condition, so
+// this is the only way a caller can see that their lambda of 0.0001 became
+// something else; fmt dispatches on the dynamic type, so it costs nothing to
+// have and shows up in any log line or test failure that prints the rule.
+func (c nelson) String() string {
+	return fmt.Sprintf("spc.Nelson(ref=%d, points=%d, rules=%v)", c.ref, c.test, c.rules)
+}
+
 // knownRules drops unknown rule identifiers, removes duplicates and returns
 // all eight when nothing valid is left.
 func knownRules(rules []Rule) []Rule {
@@ -215,11 +219,15 @@ func (c ewma) Breach(w alarm.Window) bool {
 	if !ok {
 		return false
 	}
-	half := EWMAControlLimits(sigma, c.lambda, c.l, len(test))
-	if half <= 0 {
+	half, ok := EWMAControlLimits(sigma, c.lambda, c.l, len(test))
+	if !ok {
 		return false
 	}
-	return math.Abs(EWMAStat(test, c.lambda)-centre) > half
+	stat, ok := EWMAStat(test, c.lambda)
+	if !ok {
+		return false
+	}
+	return math.Abs(stat-centre) > half
 }
 
 // Measure reports the EWMA statistic itself, which is the quantity the
@@ -230,7 +238,13 @@ func (c ewma) Measure(w alarm.Window) float64 {
 	if !ok {
 		return 0
 	}
-	return EWMAStat(test, c.lambda)
+	stat, _ := EWMAStat(test, c.lambda)
+	return stat
+}
+
+// String reports the effective configuration; see nelson.String.
+func (c ewma) String() string {
+	return fmt.Sprintf("spc.EWMA(ref=%d, points=%d, lambda=%g, L=%g)", c.ref, c.test, c.lambda, c.l)
 }
 
 // clampLambda brings lambda into the range this package can actually serve:

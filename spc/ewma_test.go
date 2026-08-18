@@ -11,18 +11,29 @@ import (
 func TestEWMAStatAgainstAHandComputedSeries(t *testing.T) {
 	series := []float64{10, 12, 14, 10}
 	for i, want := range []float64{10, 11, 12.5, 11.25} {
-		close(t, EWMAStat(series[:i+1], 0.5), want, "EWMAStat")
+		got, ok := EWMAStat(series[:i+1], 0.5)
+		if !ok {
+			t.Fatalf("EWMAStat over %v reported false", series[:i+1])
+		}
+		close(t, got, want, "EWMAStat")
 	}
 }
 
 func TestEWMAStatLambdaOne(t *testing.T) {
 	series := []float64{10, 12, 14, 7}
-	close(t, EWMAStat(series, 1), 7, "λ=1 is the last observation")
+	got, ok := EWMAStat(series, 1)
+	if !ok {
+		t.Fatal("EWMAStat reported false")
+	}
+	close(t, got, 7, "λ=1 is the last observation")
 }
 
 func TestEWMAStatSmallLambdaBarelyMoves(t *testing.T) {
 	// λ=0.01 over four points: the statistic stays near the seed.
-	got := EWMAStat([]float64{10, 20, 20, 20}, 0.01)
+	got, ok := EWMAStat([]float64{10, 20, 20, 20}, 0.01)
+	if !ok {
+		t.Fatal("EWMAStat reported false")
+	}
 	if got < 10 || got > 10.4 {
 		t.Errorf("EWMAStat = %v, want just above 10", got)
 	}
@@ -30,27 +41,38 @@ func TestEWMAStatSmallLambdaBarelyMoves(t *testing.T) {
 
 func TestEWMAStatRejectsBadInput(t *testing.T) {
 	for _, lambda := range []float64{0, -0.5, 1.5, math.NaN()} {
-		if got := EWMAStat([]float64{1, 2, 3}, lambda); got != 0 {
-			t.Errorf("EWMAStat with lambda %v = %v, want 0", lambda, got)
+		if _, ok := EWMAStat([]float64{1, 2, 3}, lambda); ok {
+			t.Errorf("EWMAStat with lambda %v should report false", lambda)
 		}
 	}
-	if got := EWMAStat(nil, 0.2); got != 0 {
-		t.Errorf("EWMAStat(nil) = %v, want 0", got)
+	if _, ok := EWMAStat(nil, 0.2); ok {
+		t.Error("EWMAStat(nil) should report false")
 	}
 }
 
 func TestEWMAControlLimits(t *testing.T) {
 	// λ=0.5, σ=2, L=3, n large: 3·2·sqrt(0.5/1.5) = 6/sqrt(3).
-	close(t, EWMAControlLimits(2, 0.5, 3, 1000), 6/math.Sqrt(3), "steady-state half-width")
+	steady, ok := EWMAControlLimits(2, 0.5, 3, 1000)
+	if !ok {
+		t.Fatal("EWMAControlLimits reported false")
+	}
+	close(t, steady, 6/math.Sqrt(3), "steady-state half-width")
 
 	// n=1: the (1-(1-λ)^{2n}) factor is 1-0.25 = 0.75.
-	close(t, EWMAControlLimits(2, 0.5, 3, 1), 6*math.Sqrt(0.75/3), "half-width at n=1")
+	first, ok := EWMAControlLimits(2, 0.5, 3, 1)
+	if !ok {
+		t.Fatal("EWMAControlLimits reported false")
+	}
+	close(t, first, 6*math.Sqrt(0.75/3), "half-width at n=1")
 }
 
 func TestEWMAControlLimitsWidenWithN(t *testing.T) {
 	prev := 0.0
 	for n := 1; n <= 40; n++ {
-		w := EWMAControlLimits(1, 0.2, 3, n)
+		w, ok := EWMAControlLimits(1, 0.2, 3, n)
+		if !ok {
+			t.Fatalf("EWMAControlLimits reported false at n=%d", n)
+		}
 		if w <= prev {
 			t.Fatalf("half-width at n=%d is %v, not wider than %v", n, w, prev)
 		}
@@ -77,8 +99,8 @@ func TestEWMAControlLimitsRejectBadInput(t *testing.T) {
 		{"sigma NaN", math.NaN(), 0.2, 3, 20},
 	}
 	for _, c := range cases {
-		if got := EWMAControlLimits(c.sigma, c.lambda, c.L, c.n); got != 0 {
-			t.Errorf("%s: half-width = %v, want 0", c.name, got)
+		if _, ok := EWMAControlLimits(c.sigma, c.lambda, c.L, c.n); ok {
+			t.Errorf("%s: should report false", c.name)
 		}
 	}
 }
@@ -131,8 +153,8 @@ func TestEWMAStatTruncationIsNegligible(t *testing.T) {
 		long[i] = 100 + float64(i%7)
 	}
 	n := EWMAMinPoints(lambda)
-	full := EWMAStat(long, lambda)
-	truncated := EWMAStat(long[len(long)-n:], lambda)
+	full, _ := EWMAStat(long, lambda)
+	truncated, _ := EWMAStat(long[len(long)-n:], lambda)
 	if diff := math.Abs(full - truncated); diff > EWMAResidualWeight*6 {
 		t.Errorf("full %v vs truncated over %d points %v: diff %v", full, n, truncated, diff)
 	}

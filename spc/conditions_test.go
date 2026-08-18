@@ -1,7 +1,9 @@
 package spc_test
 
 import (
+	"fmt"
 	"math"
+	"strings"
 	"testing"
 	"time"
 
@@ -57,7 +59,7 @@ func TestNelsonMinPoints(t *testing.T) {
 		{"all eight: rule 7 is the largest", spc.Nelson(spc.Trailing(20), 20), 35},
 		{"Fixed asks for nothing, but ref still stands", spc.Nelson(spc.Fixed(0, 1), 10, spc.Rule2), 19},
 		{"a baseline needing more than ref wins", spc.Nelson(spc.Trailing(50), 10, spc.Rule7), 65},
-		{"ref below two is raised to two", spc.Nelson(spc.Fixed(0, 1), 0, spc.Rule1), 3},
+		{"Fixed reads no reference, so rule 1 alone needs one point", spc.Nelson(spc.Fixed(0, 1), 0, spc.Rule1), 1},
 	}
 	for _, c := range cases {
 		if got := minPoints(t, c.c); got != c.want {
@@ -65,6 +67,24 @@ func TestNelsonMinPoints(t *testing.T) {
 		}
 	}
 }
+
+// A caller-supplied Baseline that does not declare its reference size gets
+// the MinRefPoints floor: there is no way to tell whether it can work with
+// fewer, and a condition that is never true is the worse guess.
+func TestAnUndeclaredBaselineGetsTheReferenceFloor(t *testing.T) {
+	if got, want := minPoints(t, spc.Nelson(undeclared{}, 0, spc.Rule1)), 3; got != want {
+		t.Errorf("MinPoints = %d, want %d", got, want)
+	}
+	if got, want := minPoints(t, spc.Nelson(undeclared{}, 30, spc.Rule1)), 31; got != want {
+		t.Errorf("MinPoints = %d, want %d", got, want)
+	}
+}
+
+// undeclared is a Baseline that does not implement spc.RefSizer, standing in
+// for the store-backed baseline a caller would write.
+type undeclared struct{}
+
+func (undeclared) Estimate(ref []float64) (float64, float64, bool) { return 0, 1, true }
 
 func TestEWMAMinPointsCountsTheBaseline(t *testing.T) {
 	// EWMAMinPoints(0.2) is 21.
@@ -106,6 +126,31 @@ func TestEWMAClampsItsArguments(t *testing.T) {
 	c := spc.EWMA(spc.Fixed(100, 1), 2, 1, -1)
 	if !c.Breach(seriesWindow(100, 100, 110)) {
 		t.Error("an L of -1 should fall back to DefaultL, not disable the condition")
+	}
+}
+
+// The effective configuration, including anything clamped at construction,
+// must be recoverable from the value the constructor returned.
+func TestConditionsReportTheirEffectiveConfiguration(t *testing.T) {
+	// L is clamped from -1 to DefaultL, and the baseline's 50 wins over the
+	// requested ref of 10.
+	got := fmt.Sprint(spc.EWMA(spc.Trailing(50), 10, 0.2, -1))
+	for _, want := range []string{"ref=50", "points=21", "lambda=0.2", "L=3"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("%q does not mention %q; a clamped argument is invisible to the caller", got, want)
+		}
+	}
+
+	// The case worth seeing: a lambda too small for any window is raised to
+	// the floor, which leaves so little room that Trailing(50) is squeezed
+	// down to 2 reference points and can never estimate. The condition is
+	// permanently false, and the only place that is visible is here.
+	squeezed := fmt.Sprint(spc.EWMA(spc.Trailing(50), 50, 1e-9, 3))
+	if !strings.Contains(squeezed, "ref=2") {
+		t.Errorf("%q should show the reference squeezed down to 2", squeezed)
+	}
+	if got := fmt.Sprint(spc.Nelson(spc.Fixed(0, 1), 4, spc.Rule2)); !strings.Contains(got, "rule2") {
+		t.Errorf("%q does not name the enabled rules", got)
 	}
 }
 

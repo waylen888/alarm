@@ -2,15 +2,21 @@ package spc
 
 import "math"
 
-// EWMAResidualWeight is the largest weight the oldest retained observation is
-// allowed to carry in an EWMA computed over a bounded window.
+// EWMAResidualWeight is the largest weight the discarded history is allowed
+// to carry in an EWMA computed over a bounded window.
 //
 // An EWMA is recursive and in principle remembers the whole process history.
-// Recomputed over the last n observations it remembers only those, and the
-// error that introduces is exactly the weight the discarded history would
-// have had: (1-λ)^n. One percent is small enough that the truncated statistic
-// and the carried-forward one differ by far less than the control limits they
-// are judged against, and it is a round number a reader can argue with. See
+// Recomputed over the last n observations it remembers only those. Because
+// the recursion is seeded at the oldest retained observation rather than
+// started from zero, the difference from a carried-forward statistic works
+// out to exactly (1-λ)^n times the gap between that seed and the value the
+// statistic would have held before it — so (1-λ)^n is the weight of the
+// history that was dropped, not the weight of any observation that was kept
+// (the oldest retained one carries (1-λ)^{n-1}).
+//
+// One percent is small enough that the truncated statistic and the
+// carried-forward one differ by far less than the control limits they are
+// judged against, and it is a round number a reader can argue with. See
 // EWMAMinPoints.
 const EWMAResidualWeight = 0.01
 
@@ -21,22 +27,26 @@ const EWMAResidualWeight = 0.01
 //	zᵢ = λ·series[i] + (1-λ)·zᵢ₋₁
 //
 // λ near 1 discards history and the statistic approaches the last raw
-// observation; λ near 0 smooths heavily and reacts slowly. It returns 0 for
-// an empty series or a lambda outside (0,1].
+// observation; λ near 0 smooths heavily and reacts slowly. It reports false
+// for an empty series or a lambda outside (0,1]; a bare zero would be
+// indistinguishable from a perfectly ordinary EWMA.
 //
 // Seeding at series[0] rather than at the centre line keeps the function
 // independent of any baseline, which is what lets it live in this layer. Over
 // a series of at least EWMAMinPoints observations the choice of seed carries
 // less than EWMAResidualWeight of the result.
-func EWMAStat(series []float64, lambda float64) float64 {
+func EWMAStat(series []float64, lambda float64) (float64, bool) {
 	if len(series) == 0 || !finite(lambda) || lambda <= 0 || lambda > 1 {
-		return 0
+		return 0, false
 	}
 	z := series[0]
 	for _, x := range series[1:] {
 		z = lambda*x + (1-lambda)*z
 	}
-	return z
+	if !finite(z) {
+		return 0, false
+	}
+	return z, true
 }
 
 // EWMAControlLimits returns the half-width of the EWMA control limits at
@@ -56,26 +66,27 @@ func EWMAStat(series []float64, lambda float64) float64 {
 // limits do on a Shewhart chart; 3 is the conventional value, and lowering it
 // detects smaller shifts sooner at the cost of more false alarms.
 //
-// It returns 0 when any argument is out of range, which callers should treat
-// as "no judgement is possible" rather than as a limit of zero.
-func EWMAControlLimits(sigma, lambda, L float64, n int) (halfWidth float64) {
+// It reports false when any argument is out of range, meaning no judgement
+// is possible — which is not the same as a limit of zero, and every caller
+// divides the difference by it or compares against it.
+func EWMAControlLimits(sigma, lambda, L float64, n int) (halfWidth float64, ok bool) {
 	if !finite(sigma) || sigma <= 0 || !finite(lambda) || lambda <= 0 || lambda > 1 ||
 		!finite(L) || L <= 0 || n < 1 {
-		return 0
+		return 0, false
 	}
 	steady := lambda / (2 - lambda)
 	startup := 1 - math.Pow(1-lambda, 2*float64(n))
 	w := L * sigma * math.Sqrt(steady*startup)
 	if !finite(w) || w <= 0 {
-		return 0
+		return 0, false
 	}
-	return w
+	return w, true
 }
 
 // EWMAMinPoints returns how many observations an EWMA with smoothing factor
 // lambda must be computed over before window truncation is negligible: the
-// smallest n for which the oldest retained observation's weight (1-λ)^n falls
-// below EWMAResidualWeight.
+// smallest n for which the discarded history's weight (1-λ)^n falls below
+// EWMAResidualWeight.
 //
 //	n = ceil( ln(EWMAResidualWeight) / ln(1-λ) )
 //

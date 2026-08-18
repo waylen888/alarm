@@ -19,11 +19,20 @@ type Baseline interface {
 	Estimate(ref []float64) (centre, sigma float64, ok bool)
 }
 
+// MinRefPoints is the fewest reference observations a condition will ask a
+// baseline for when the baseline does not declare its own requirement.
+// Below two there is no dispersion to estimate, so a smaller number would
+// buy a caller nothing but a condition that never breaches.
+const MinRefPoints = 2
+
 // RefSizer is an optional interface a Baseline may implement to declare how
 // many reference observations it needs. A window sized without counting them
 // leaves the condition permanently false, so the conditions in this package
-// add the declared size to their MinPoints. A Baseline that does not
-// implement it needs no reference observations of its own.
+// add the declared size to their MinPoints.
+//
+// A Baseline that does not implement it is assumed to need a dispersion
+// estimate of its own, and so at least MinRefPoints observations. Declaring
+// zero — as Fixed does — is how a baseline says it reads none.
 type RefSizer interface {
 	RefPoints() int
 }
@@ -31,12 +40,20 @@ type RefSizer interface {
 // refPointsOf reports how many reference observations to hand b, given the
 // caller's requested ref. A baseline's own declared requirement wins when it
 // is larger: honouring the smaller number would guarantee Estimate reports
-// false on every evaluation.
+// false on every evaluation. An undeclared baseline gets the MinRefPoints
+// floor, since there is no way to tell whether it can work with fewer.
 func refPointsOf(b Baseline, ref int) int {
+	if ref < 0 {
+		ref = 0
+	}
 	if s, ok := b.(RefSizer); ok {
 		if n := s.RefPoints(); n > ref {
 			return n
 		}
+		return ref
+	}
+	if ref < MinRefPoints {
+		return MinRefPoints
 	}
 	return ref
 }
@@ -54,6 +71,10 @@ func Fixed(centre, sigma float64) Baseline { return fixed{centre: centre, sigma:
 type fixed struct {
 	centre, sigma float64
 }
+
+// RefPoints is zero: Fixed reads no reference observations, so a condition
+// built on it need not wait for any before it can judge.
+func (b fixed) RefPoints() int { return 0 }
 
 func (b fixed) Estimate([]float64) (float64, float64, bool) {
 	if !finite(b.centre) || !finite(b.sigma) || b.sigma <= 0 {
