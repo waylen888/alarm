@@ -1,0 +1,106 @@
+package spc
+
+import (
+	"math"
+	"sort"
+)
+
+// MADScale scales a median absolute deviation into an estimate of the
+// standard deviation. For normally distributed data the MAD converges to
+// 0.6745σ, so σ ≈ MAD/0.6745 = 1.4826·MAD. The constant is what makes MAD
+// comparable to StdDev, and therefore usable as the dispersion of a control
+// chart whose limits are expressed in multiples of σ.
+const MADScale = 1.4826
+
+// Mean returns the arithmetic mean of xs. It reports false for an empty
+// slice or a non-finite result.
+func Mean(xs []float64) (float64, bool) {
+	if len(xs) == 0 {
+		return 0, false
+	}
+	var sum float64
+	for _, x := range xs {
+		sum += x
+	}
+	m := sum / float64(len(xs))
+	if !finite(m) {
+		return 0, false
+	}
+	return m, true
+}
+
+// StdDev returns the sample standard deviation of xs, the square root of the
+// sum of squared deviations divided by n-1. It reports false for fewer than
+// two observations, a non-finite result, or zero variance — a zero dispersion
+// is never a usable answer, because every caller divides by it.
+//
+// The n-1 divisor is deliberate: the observations are a sample of the
+// process, not the whole of it, and the population form would understate the
+// dispersion and so overstate every z it feeds.
+func StdDev(xs []float64) (float64, bool) {
+	if len(xs) < 2 {
+		return 0, false
+	}
+	mean, ok := Mean(xs)
+	if !ok {
+		return 0, false
+	}
+	var sum float64
+	for _, x := range xs {
+		d := x - mean
+		sum += d * d
+	}
+	sd := math.Sqrt(sum / float64(len(xs)-1))
+	if !finite(sd) || sd <= 0 {
+		return 0, false
+	}
+	return sd, true
+}
+
+// Median returns the median of xs, the mean of the two central values for an
+// even count. It does not modify xs. It reports false for an empty slice or a
+// non-finite result.
+func Median(xs []float64) (float64, bool) {
+	if len(xs) == 0 {
+		return 0, false
+	}
+	s := make([]float64, len(xs))
+	copy(s, xs)
+	sort.Float64s(s)
+	var m float64
+	if n := len(s); n%2 == 1 {
+		m = s[n/2]
+	} else {
+		m = (s[n/2-1] + s[n/2]) / 2
+	}
+	if !finite(m) {
+		return 0, false
+	}
+	return m, true
+}
+
+// MAD returns the median absolute deviation of xs: the median of the absolute
+// deviations from the median. It does not modify xs. It reports false for an
+// empty slice, a non-finite result, or a zero deviation.
+//
+// MAD has a breakdown point of 50%: up to half the observations can be
+// arbitrarily corrupted without moving it. A standard deviation has a
+// breakdown point of zero — one outlier moves it as far as you like — which
+// is why a reference period containing spikes needs this instead.
+func MAD(xs []float64) (float64, bool) {
+	med, ok := Median(xs)
+	if !ok {
+		return 0, false
+	}
+	dev := make([]float64, len(xs))
+	for i, x := range xs {
+		dev[i] = math.Abs(x - med)
+	}
+	mad, ok := Median(dev)
+	if !ok || mad <= 0 {
+		return 0, false
+	}
+	return mad, true
+}
+
+func finite(x float64) bool { return !math.IsNaN(x) && !math.IsInf(x, 0) }
