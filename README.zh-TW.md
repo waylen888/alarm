@@ -234,7 +234,7 @@ type Event struct {
 | `AnyN(n, judge)` | 最近 n 筆任一達標；不足 n 筆不成立 | n |
 | `ConsecutiveDeltaN(n, judge)` | 最近 n 組相鄰差分皆達標（counter 每輪增量） | **n+1** |
 | `CountInWindow(n, window)` | window 內出現 >= n 次（log 頻率告警） | n，並宣告時間跨度 |
-| `RateInWindow(window, judge)` | window 內 counter 每秒增量達標；速率以視窗內首尾觀測的實際時距計算 | 視窗內需 2 筆以上，容量以預設 64 起算並依跨度擴容 |
+| `RateInWindow(window, judge)` | window 內 counter 每秒增量達標；速率以視窗內首尾觀測的實際時距計算 | 視窗內需 2 筆以上，容量以 `DefaultMinPoints`（64）起算並依跨度擴容 |
 | `All(cs...)` / `Any(cs...)` | 組合 | 取子條件最大值 |
 
 閾值語意一律以 closure 帶入，判斷邏輯維持單一真相源：
@@ -259,12 +259,13 @@ type Condition interface{ Breach(w Window) bool }
 
 | 介面 | 方法 | 告訴引擎 | 未實作時的預設 |
 | --- | --- | --- | --- |
-| `PointsHinter` | `MinPoints() int` | 判斷所需的最少觀測筆數 | 64 筆 |
+| `PointsHinter` | `MinPoints() int` | 判斷所需的最少觀測筆數 | `DefaultMinPoints`（64） |
 | `SpanHinter` | `MinSpan() time.Duration` | 判斷涵蓋的時間跨度，視窗會為此擴容 | 無跨度 |
 | `Measurer` | `Measure(w Window) float64` | 要填進 `Event.Value` 的量測值 | 最後觀測值 |
 
-有沒有宣告差很多：一個要看 200 筆樣本卻什麼都沒宣告的條件，只會拿到 64 筆的視窗，
-永遠不可能成立；時間型條件不宣告跨度，視窗一滿就會被筆數上限靜默截斷。
+有沒有宣告差很多：一個要看 200 筆樣本卻什麼都沒宣告的條件，只會拿到
+`DefaultMinPoints`（64）筆的視窗，永遠不可能成立；時間型條件不宣告跨度，
+視窗一滿就會被筆數上限靜默截斷。
 
 ```go
 // 最近 n 筆的平均值超過 limit 即成立。

@@ -13,7 +13,7 @@ type Condition interface {
 // PointsHinter is an optional interface a Condition may implement to declare
 // the minimum number of observations its judgement needs. The engine uses it
 // to size a key's window when the rule is installed. A Condition that does not
-// implement it is assumed to need 64 points.
+// implement it is assumed to need DefaultMinPoints observations.
 //
 // Declare this whenever the judgement inspects a fixed number of samples: a
 // window sized too small can never satisfy the condition, and the engine has
@@ -47,13 +47,17 @@ type Measurer interface {
 	Measure(w Window) float64
 }
 
-const defaultMinPoints = 64
+// DefaultMinPoints is the window size assumed for a Condition that does not
+// implement PointsHinter. A condition whose judgement inspects more
+// observations than this will never breach unless it declares that through
+// PointsHinter. MaxWindowPoints is the corresponding upper bound.
+const DefaultMinPoints = 64
 
 func minPointsOf(c Condition) int {
 	if h, ok := c.(PointsHinter); ok {
 		return h.MinPoints()
 	}
-	return defaultMinPoints
+	return DefaultMinPoints
 }
 
 func minSpanOf(c Condition) time.Duration {
@@ -239,7 +243,7 @@ func (c rateInWindow) Breach(w Window) bool {
 	return ok && c.judge(rate)
 }
 
-func (c rateInWindow) MinPoints() int { return defaultMinPoints }
+func (c rateInWindow) MinPoints() int { return DefaultMinPoints }
 
 func (c rateInWindow) MinSpan() time.Duration { return c.window }
 

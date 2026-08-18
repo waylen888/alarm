@@ -242,7 +242,7 @@ truth: **[pkg.go.dev/github.com/waylen888/alarm](https://pkg.go.dev/github.com/w
 | `AnyN(n, judge)` | Any of the last n satisfies `judge`; fewer than n never breaches | n |
 | `ConsecutiveDeltaN(n, judge)` | The last n adjacent deltas all satisfy `judge` (counter increments) | **n+1** |
 | `CountInWindow(n, window)` | At least n observations inside `window` (log-frequency alerting) | n, and declares a time span |
-| `RateInWindow(window, judge)` | A counter's per-second increment over `window` satisfies `judge`, computed over the actual elapsed time between the first and last point in the window | ≥2 in the window; capacity starts at 64 and grows with the span |
+| `RateInWindow(window, judge)` | A counter's per-second increment over `window` satisfies `judge`, computed over the actual elapsed time between the first and last point in the window | ≥2 in the window; capacity starts at `DefaultMinPoints` (64) and grows with the span |
 | `All(cs...)` / `Any(cs...)` | Conjunction / disjunction | max over sub-conditions |
 
 Threshold semantics always arrive as a closure, so the caller keeps one source of truth for
@@ -270,13 +270,13 @@ the window and reports the value accordingly:
 
 | Interface | Method | Tells the engine | Default if absent |
 | --- | --- | --- | --- |
-| `PointsHinter` | `MinPoints() int` | How many observations the judgement needs | 64 points |
+| `PointsHinter` | `MinPoints() int` | How many observations the judgement needs | `DefaultMinPoints` (64) |
 | `SpanHinter` | `MinSpan() time.Duration` | What time span it covers; the window grows to keep it | no span |
 | `Measurer` | `Measure(w Window) float64` | What to report in `Event.Value` | the last observed value |
 
 Declaring them matters. A condition that inspects 200 samples but declares nothing gets a
-64-point window and can never breach; a time-based condition that declares no span gets
-silently truncated by the point cap once the window fills.
+window of `DefaultMinPoints` (64) and can never breach; a time-based condition that declares
+no span gets silently truncated by the point cap once the window fills.
 
 ```go
 // Breaches when the mean of the last n observations exceeds limit.
