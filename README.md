@@ -20,6 +20,7 @@ Zero dependencies. The package imports only the standard library, and always wil
 - [State machine](#state-machine)
 - [API](#api)
 - [Built-in conditions](#built-in-conditions)
+- [Statistical process control: the spc subpackage](#statistical-process-control-the-spc-subpackage)
 - [Escalate and Exit](#escalate-and-exit)
 - [Hot reload and Fingerprint](#hot-reload-and-fingerprint)
 - [Data availability: Stale, Vanish, MaxKeys](#data-availability-stale-vanish-maxkeys)
@@ -306,6 +307,55 @@ func (c meanOver) mean(w alarm.Window) float64 {
 
 Condition implementations **must be stateless**. All state lives in the engine, which is
 what allows conditions to be hot-swapped on reload.
+
+---
+
+## Statistical process control: the spc subpackage
+
+```go
+import "github.com/waylen888/alarm/spc"
+```
+
+A threshold is the wrong tool for a metric with a strong daily cycle. In a trading system
+a ten-fold spike at 09:00 is the market opening and the same value at 11:00 is an
+incident; a fixed limit is wrong at every hour except the one it was tuned for.
+`spc` supplies control-chart conditions that ask a different question — is this sample
+consistent with this metric's own recent behaviour?
+
+Two conditions, both ordinary `alarm.Condition` values:
+
+```go
+spc.Nelson(spc.TrailingRobust(30), 30, spc.Rule2) // nine samples on one side of the centre
+spc.EWMA(spc.Trailing(50), 50, 0.2, 3)            // a small sustained shift
+```
+
+The eight [Nelson rules](https://en.wikipedia.org/wiki/Nelson_rules) (Nelson, 1984) cover
+gross excursions, sustained shifts, trends, over-adjustment and mixtures. EWMA covers the
+small sustained shift that rule 1 never sees and rule 2 sees nine samples late. The centre
+line and dispersion come from a `Baseline`: `Fixed` for a known normal range, `Trailing`
+for mean and standard deviation over the preceding observations, `TrailingRobust` for
+median and MAD when the reference period may contain spikes.
+
+Three things are worth knowing before reaching for it:
+
+- **The observations under test are never part of their own baseline.** A sustained shift
+  allowed into its own centre line makes the chart blind to itself. The `Baseline`
+  interface only ever receives the reference observations, so the exclusion is structural.
+- **The statistic's memory is the window's length.** Conditions must be stateless, so the
+  statistic is recomputed from the window on every evaluation. `MinPoints` is derived, not
+  guessed: for EWMA it is the point count at which the observations a bounded window drops
+  are worth under one percent.
+- **`MinPoints` counts both halves.** Rule 7 over a `Trailing(50)` baseline reads 65
+  observations and declares 65. The subpackage handles this; a hand-rolled condition that
+  forgets it is silently never true.
+
+The statistics layer — `Mean`, `StdDev`, `Median`, `MAD`, the baselines, `Check`,
+`EWMAStat` — operates on `[]float64` and does not import `alarm`. It is usable on its own.
+Zero dependencies, same as the parent.
+
+CUSUM, seasonal baselines, subgrouped charts and capability indices are deliberately not
+here; see the [package documentation](https://pkg.go.dev/github.com/waylen888/alarm/spc)
+for why.
 
 ---
 

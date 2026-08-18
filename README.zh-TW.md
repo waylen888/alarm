@@ -19,6 +19,7 @@ import "github.com/waylen888/alarm"
 - [狀態機](#狀態機)
 - [API](#api)
 - [條件目錄](#條件目錄)
+- [統計製程管制：spc 子套件](#統計製程管制spc-子套件)
 - [Escalate 與 Exit](#escalate-與-exit)
 - [熱更新與 Fingerprint](#熱更新與-fingerprint)
 - [資料存在性：Stale / Vanish / MaxKeys](#資料存在性stale--vanish--maxkeys)
@@ -294,6 +295,47 @@ func (c meanOver) mean(w alarm.Window) float64 {
 ```
 
 條件實作**必須無狀態**——狀態由引擎持有，規則熱更新才能安全替換條件。
+
+---
+
+## 統計製程管制：spc 子套件
+
+```go
+import "github.com/waylen888/alarm/spc"
+```
+
+對於日內節奏強烈的指標，閾值本來就是錯的工具。交易系統在 09:00 出現十倍尖峰是開盤，
+同樣的值出現在 11:00 則是事故；固定上限除了被調校的那個時段以外，每個時段都是錯的。
+`spc` 提供管制圖條件，問的是另一個問題——這筆樣本和這個指標自己近期的行為一致嗎？
+
+兩個條件，都是普通的 `alarm.Condition`：
+
+```go
+spc.Nelson(spc.TrailingRobust(30), 30, spc.Rule2) // 連續九點落在中心線同一側
+spc.EWMA(spc.Trailing(50), 50, 0.2, 3)            // 幅度小但持續的偏移
+```
+
+八條 [Nelson 規則](https://en.wikipedia.org/wiki/Nelson_rules)（Nelson, 1984）涵蓋劇烈偏移、
+持續偏移、趨勢、過度調整與混合分佈。EWMA 負責的是規則 1 永遠看不到、規則 2 要晚九筆樣本
+才看得到的小幅持續偏移。中心線與離散度由 `Baseline` 提供：`Fixed` 用於正常範圍已知的指標，
+`Trailing` 取前段觀測的平均與標準差，`TrailingRobust` 取中位數與 MAD，
+適用於參考期本身可能含有尖峰的情況。
+
+在採用之前有三件事值得先知道：
+
+- **受測點永遠不會進入自己的基線。** 持續偏移若混入自己的中心線，管制圖就會對它視而不見。
+  `Baseline` 介面只拿得到參考觀測，這個排除是結構上的，不是靠約定。
+- **統計量的記憶長度就是視窗長度。** 條件必須無狀態，所以統計量在每次評估時都由視窗重算。
+  `MinPoints` 是推導出來的，不是猜的：EWMA 取的是「被有界視窗丟掉的觀測其權重低於百分之一」
+  的那個點數。
+- **`MinPoints` 要把兩段都算進去。** 規則 7 搭配 `Trailing(50)` 基線會讀 65 筆觀測，
+  就宣告 65。子套件已經處理好；自己手寫而漏掉這件事的條件，會安靜地永遠不成立。
+
+統計層——`Mean`、`StdDev`、`Median`、`MAD`、各個 baseline、`Check`、`EWMAStat`——
+只處理 `[]float64`，不 import `alarm`，可以單獨使用。與母套件一樣是零依賴。
+
+CUSUM、季節性基線、分組管制圖與製程能力指數都刻意不在這裡；理由見
+[套件文件](https://pkg.go.dev/github.com/waylen888/alarm/spc)。
 
 ---
 
