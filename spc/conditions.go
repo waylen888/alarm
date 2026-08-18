@@ -1,0 +1,265 @@
+package spc
+
+import (
+	"math"
+
+	"github.com/waylen888/alarm"
+)
+
+// This is the only file in the package that imports alarm. Everything else
+// operates on []float64 and knows nothing about windows, engines or events,
+// so the statistics stay usable — and extractable — without the alerting
+// engine. Keep it that way.
+
+// Defaults substituted for arguments that are out of range in a way that has
+// no nearest valid value.
+const (
+	// DefaultLambda is the smoothing factor used when the caller's lambda is
+	// not a finite number in (0,1]. 0.2 is the conventional choice for
+	// detecting shifts of roughly one sigma.
+	DefaultLambda = 0.2
+	// DefaultL is the control limit width used when the caller's L is not a
+	// finite positive number. 3 mirrors the three-sigma limits of a Shewhart
+	// chart.
+	DefaultL = 3
+	// MinRefPoints is the fewest reference observations a condition will ask
+	// a baseline for. Below two there is no dispersion to estimate.
+	MinRefPoints = 2
+)
+
+// Argument handling, applied consistently by both constructors:
+//
+// Constructors never return an error and never panic. An argument outside its
+// valid range is clamped to the nearest value inside it; an argument whose
+// range is open at the offending end, so that no nearest value exists, is
+// replaced by the documented default above. Unknown rule identifiers are
+// dropped, and a rule set that is empty after that means all eight.
+//
+// The alternative — a condition that is silently and permanently false — is
+// the worst failure mode an alerting library has, and the engine offers no
+// logger through which to announce one. Clamping is loud in the only place it
+// can be: MinPoints, and this documentation.
+
+// chart binds a baseline to the split between the reference observations and
+// the observations under test. Both conditions embed it, and it is the single
+// place the split is performed, which is what keeps the points under test out
+// of their own baseline.
+type conditionBase struct {
+	b    Baseline
+	ref  int // reference observations handed to the baseline
+	test int // observations judged against the resulting limits
+}
+
+func newBase(b Baseline, ref, test int) conditionBase {
+	if ref < MinRefPoints {
+		ref = MinRefPoints
+	}
+	ref = refPointsOf(b, ref)
+	if max := alarm.MaxWindowPoints - test; ref > max {
+		// The window cannot hold both. Clamping keeps MinPoints satisfiable;
+		// a baseline that genuinely needs this many observations is beyond
+		// what a window can supply and will report false forever, which is
+		// visible in MinPoints reaching the cap.
+		ref = max
+	}
+	if ref < MinRefPoints {
+		// Reachable only if test alone exceeded the window, which neither
+		// constructor allows. Keeping the floor here means the split below
+		// can never be asked for a negative slice.
+		ref = MinRefPoints
+	}
+	return conditionBase{b: b, ref: ref, test: test}
+}
+
+// MinPoints is the reference size plus the observations under test. Both
+// halves must fit: a window sized for the rules alone leaves the baseline
+// unable to estimate, and the condition is then permanently false.
+func (c conditionBase) MinPoints() int { return c.ref + c.test }
+
+// split returns the reference observations and the observations under test,
+// oldest first, together with the baseline estimated from the former. It
+// reports false when the window is too short or the baseline cannot produce a
+// usable estimate.
+func (c conditionBase) split(w alarm.Window) (test []float64, centre, sigma float64, ok bool) {
+	pts := w.LastN(c.ref + c.test)
+	if len(pts) < c.ref+c.test {
+		return nil, 0, 0, false
+	}
+	vals := make([]float64, len(pts))
+	for i, p := range pts {
+		vals[i] = p.Value
+	}
+	centre, sigma, ok = c.b.Estimate(vals[:c.ref])
+	if !ok {
+		return nil, 0, 0, false
+	}
+	return vals[c.ref:], centre, sigma, true
+}
+
+// Nelson breaches when one of the named Nelson rules completes at the most
+// recent observation, judged against the limits b estimates from the ref
+// observations preceding the ones under test. Passing no rules enables all
+// eight; unknown rules are dropped, and if that leaves none, all eight are
+// enabled.
+//
+// Only rules completing at the newest observation breach. A rule that
+// completed six observations ago has already been reported, and leaving it
+// breaching would keep the alert up long after the process recovered — which
+// is what Rule.ClearFor and Rule.For are for, and not something a condition
+// should decide by being sticky.
+//
+// The statistic is recomputed from the window on every evaluation, so the
+// condition holds no state and can be hot-swapped. Its memory is exactly the
+// window's length: see the package documentation.
+//
+// MinPoints is the largest Points() among the enabled rules plus the
+// reference size, so a Nelson(Trailing(50), 50, Rule7) condition declares 65.
+// Getting that wrong yields a condition that never breaches, so the two are
+// added here rather than left to the caller.
+func Nelson(b Baseline, ref int, rules ...Rule) alarm.Condition {
+	rules = knownRules(rules)
+	test := 0
+	for _, r := range rules {
+		if n := r.Points(); n > test {
+			test = n
+		}
+	}
+	return nelson{conditionBase: newBase(b, ref, test), rules: rules}
+}
+
+type nelson struct {
+	conditionBase
+	rules []Rule
+}
+
+func (c nelson) Breach(w alarm.Window) bool {
+	test, centre, sigma, ok := c.split(w)
+	if !ok {
+		return false
+	}
+	last := len(test) - 1
+	for _, v := range Check(test, centre, sigma, c.rules...) {
+		if v.Index == last {
+			return true
+		}
+	}
+	return false
+}
+
+// Measure reports the sigma distance of the most recent observation from the
+// centre line. The last raw observation, which is the engine's default, says
+// almost nothing about a rule that fired on a nine-point run; how far out the
+// process is says a good deal.
+func (c nelson) Measure(w alarm.Window) float64 {
+	test, centre, sigma, ok := c.split(w)
+	if !ok {
+		return 0
+	}
+	return (test[len(test)-1] - centre) / sigma
+}
+
+// knownRules drops unknown rule identifiers, removes duplicates and returns
+// all eight when nothing valid is left.
+func knownRules(rules []Rule) []Rule {
+	var out []Rule
+	for _, r := range rules {
+		if r.Valid() && !contains(out, r) {
+			out = append(out, r)
+		}
+	}
+	if len(out) == 0 {
+		return allRules
+	}
+	return out
+}
+
+// EWMA breaches when the exponentially weighted moving average of the most
+// recent observations leaves the control limits L·σ·sqrt(λ/(2-λ)·(1-(1-λ)^2ⁿ))
+// around the centre line b estimates from the ref observations preceding
+// them.
+//
+// This is the tool for a small sustained shift: one that Nelson rule 1 will
+// never see because it is nowhere near three sigma, and that rule 2 sees only
+// nine observations after it started.
+//
+// lambda selects how much history the statistic keeps, and MinPoints follows
+// from it rather than being chosen: the condition judges EWMAMinPoints(lambda)
+// observations, the fewest for which the truncation imposed by a bounded
+// window costs less than EWMAResidualWeight. For the default lambda of 0.2
+// that is 21 observations, and with a Trailing(50) baseline MinPoints is 71.
+//
+// lambda above 1 is clamped to 1, and a lambda so small that the derived point
+// count would not fit in alarm.MaxWindowPoints is raised to the smallest one
+// that does. A lambda that is not a finite number in (0,1] becomes
+// DefaultLambda, and an L that is not finite and positive becomes DefaultL.
+func EWMA(b Baseline, ref int, lambda, L float64) alarm.Condition {
+	lambda = clampLambda(lambda)
+	if !finite(L) || L <= 0 {
+		L = DefaultL
+	}
+	return ewma{
+		conditionBase: newBase(b, ref, EWMAMinPoints(lambda)),
+		lambda:        lambda,
+		l:             L,
+	}
+}
+
+type ewma struct {
+	conditionBase
+	lambda float64
+	l      float64
+}
+
+func (c ewma) Breach(w alarm.Window) bool {
+	test, centre, sigma, ok := c.split(w)
+	if !ok {
+		return false
+	}
+	half := EWMAControlLimits(sigma, c.lambda, c.l, len(test))
+	if half <= 0 {
+		return false
+	}
+	return math.Abs(EWMAStat(test, c.lambda)-centre) > half
+}
+
+// Measure reports the EWMA statistic itself, which is the quantity the
+// judgement is about. The most recent raw observation is a sample of the noise
+// the statistic exists to smooth away.
+func (c ewma) Measure(w alarm.Window) float64 {
+	test, _, _, ok := c.split(w)
+	if !ok {
+		return 0
+	}
+	return EWMAStat(test, c.lambda)
+}
+
+// clampLambda brings lambda into the range this package can actually serve:
+// (0,1], further bounded below by the smallest smoothing factor whose derived
+// point count still fits inside a window.
+func clampLambda(lambda float64) float64 {
+	if !finite(lambda) || lambda <= 0 {
+		lambda = DefaultLambda
+	}
+	if lambda > 1 {
+		return 1
+	}
+	if floor := lambdaFloor(alarm.MaxWindowPoints - MinRefPoints); lambda < floor {
+		return floor
+	}
+	return lambda
+}
+
+// lambdaFloor returns the smallest smoothing factor whose EWMAMinPoints is at
+// most max, the exact inverse of that function. The correction loop absorbs
+// the rounding in Log and Exp, which can leave the closed-form answer one
+// point over the limit.
+func lambdaFloor(max int) float64 {
+	if max < 1 {
+		return 1
+	}
+	l := 1 - math.Exp(math.Log(EWMAResidualWeight)/float64(max))
+	for EWMAMinPoints(l) > max {
+		l = math.Nextafter(l, 1)
+	}
+	return l
+}
