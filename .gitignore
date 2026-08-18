@@ -1,0 +1,6 @@
+.spec
+
+# Go build and test artefacts
+*.test
+*.out
+coverage.txt
