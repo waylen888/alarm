@@ -12,6 +12,25 @@ import "github.com/waylen888/alarm"
 
 Zero dependencies. The package imports only the standard library, and always will.
 
+## Contents
+
+- [What it is](#what-it-is)
+- [Quick start](#quick-start)
+- [Core concepts](#core-concepts)
+- [State machine](#state-machine)
+- [API](#api)
+- [Built-in conditions](#built-in-conditions)
+- [Escalate and Exit](#escalate-and-exit)
+- [Hot reload and Fingerprint](#hot-reload-and-fingerprint)
+- [Data availability: Stale, Vanish, MaxKeys](#data-availability-stale-vanish-maxkeys)
+- [Event.Meta: self-contained events](#eventmeta-self-contained-events)
+- [Concurrency and lifecycle](#concurrency-and-lifecycle)
+- [Window capacity and limits](#window-capacity-and-limits)
+- [Production usage](#production-usage)
+- [Limitations](#limitations)
+- [Design invariants](#design-invariants)
+- [License](#license)
+
 ---
 
 ## What it is
@@ -209,64 +228,8 @@ event.
 
 ## API
 
-### Observation
-
-```go
-engine.Observe(ruleID, key string, v float64, at time.Time)
-engine.ObserveMeta(ruleID, key string, v float64, at time.Time, meta any)
-engine.ObserveEvent(ruleID, key string, at time.Time)               // value fixed at 1, for log-hit style input
-engine.ObserveEventMeta(ruleID, key string, at time.Time, meta any)
-engine.Touch(ruleID, key string, at time.Time)                      // "still here, but no usable value this round"
-```
-
-An unknown `ruleID` is ignored silently — racing with `SetRules` is normal.
-
-`Touch` covers the case where the series genuinely still exists but this round produces no
-value, such as a counter's first sample or the round after a reset. It only suppresses
-`Stale`/`Vanish`; it does **not** push to the window and does **not** evaluate conditions.
-The freeze lasts until the next real observation — during it, `Tick` will not use the stale
-values still sitting in the window to drive a condition, because those values are no longer
-trustworthy.
-
-### Time
-
-```go
-engine.Tick(now time.Time)                              // drive from your own loop
-engine.Run(ctx context.Context, interval time.Duration) // or let the engine tick itself
-```
-
-`Tick` re-evaluates time-dependent conditions as their windows decay, detects `Stale` and
-`Vanish`, and emits due `Reminder`s. If a rule uses no time-window condition, disables both
-`Stale` and `Vanish` (`StaleAfter: -1, VanishAfter: -1`) and sets no `Reminder`, you do not
-need `Tick` at all — state is then purely observation-driven.
-
-### Rules and state
-
-```go
-engine.SetRules(rules []Rule)      // hot reload; a rule that disappears has its state cleared silently
-engine.Forget(ruleID, key string)  // silently drop one key, no event
-engine.ForgetRule(ruleID string)   // silently drop every key of a rule, keeping the rule
-```
-
-### Queries (safe to call from a handler)
-
-```go
-engine.Has(ruleID, key string) bool
-engine.State(ruleID, key string) (State, Severity, bool)
-engine.Snapshot() []Event // every key currently Firing or Stale, sorted by rule then key
-```
-
-### Construction options
-
-```go
-alarm.New(handler,
-    alarm.WithDefaultStale(d),   // default when a Rule leaves StaleAfter unset (0 = off)
-    alarm.WithDefaultVanish(d),  // default 1 hour
-    alarm.WithDefaultMaxKeys(n), // default 1000
-    alarm.WithClock(now),        // used by Run and Snapshot; injectable for tests
-    alarm.WithLogf(logf),        // the engine depends on no logging package
-)
-```
+Method signatures and their full semantics live in the godoc, which is the single source of
+truth: **[pkg.go.dev/github.com/waylen888/alarm](https://pkg.go.dev/github.com/waylen888/alarm)**.
 
 ---
 
@@ -295,18 +258,54 @@ negative delta a reset produces is left for `judge` to interpret. (`Window.Delta
 
 ### Custom conditions
 
-Implement `Condition`. Three optional unexported-method interfaces let the engine size the
-window more accurately; a condition in your own package cannot implement them, so
-`All`/`Any` composition over the built-ins is the way to reuse the hints:
+`Condition` is the extension point. Implement it in your own package and the engine treats
+it exactly like a built-in:
 
 ```go
-minPoints() int           // points the judgement needs; sets initial window capacity (default 64)
-minSpan() time.Duration   // time span for window-based conditions; lets the engine grow with density
-measure(w Window) float64 // the value put into Event.Value on a hit (default: last observation)
+type Condition interface{ Breach(w Window) bool }
+```
+
+Three further interfaces are optional. Implement the ones that apply, and the engine sizes
+the window and reports the value accordingly:
+
+| Interface | Method | Tells the engine | Default if absent |
+| --- | --- | --- | --- |
+| `PointsHinter` | `MinPoints() int` | How many observations the judgement needs | 64 points |
+| `SpanHinter` | `MinSpan() time.Duration` | What time span it covers; the window grows to keep it | no span |
+| `Measurer` | `Measure(w Window) float64` | What to report in `Event.Value` | the last observed value |
+
+Declaring them matters. A condition that inspects 200 samples but declares nothing gets a
+64-point window and can never breach; a time-based condition that declares no span gets
+silently truncated by the point cap once the window fills.
+
+```go
+// Breaches when the mean of the last n observations exceeds limit.
+type meanOver struct {
+    n     int
+    limit float64
+}
+
+func (c meanOver) Breach(w alarm.Window) bool { return c.mean(w) > c.limit }
+
+func (c meanOver) MinPoints() int { return c.n }
+
+func (c meanOver) Measure(w alarm.Window) float64 { return c.mean(w) } // report the mean, not the last sample
+
+func (c meanOver) mean(w alarm.Window) float64 {
+    pts := w.LastN(c.n)
+    if len(pts) < c.n {
+        return 0
+    }
+    var sum float64
+    for _, p := range pts {
+        sum += p.Value
+    }
+    return sum / float64(len(pts))
+}
 ```
 
 Condition implementations **must be stateless**. All state lives in the engine, which is
-what allows conditions to be hot-swapped.
+what allows conditions to be hot-swapped on reload.
 
 ---
 

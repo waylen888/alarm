@@ -11,6 +11,25 @@ import "github.com/waylen888/alarm"
 
 零依賴：本 package 只 import 標準函式庫，往後也會維持這條線。
 
+## 目錄
+
+- [這是什麼](#這是什麼)
+- [快速開始](#快速開始)
+- [核心概念](#核心概念)
+- [狀態機](#狀態機)
+- [API](#api)
+- [條件目錄](#條件目錄)
+- [Escalate 與 Exit](#escalate-與-exit)
+- [熱更新與 Fingerprint](#熱更新與-fingerprint)
+- [資料存在性：Stale / Vanish / MaxKeys](#資料存在性stale--vanish--maxkeys)
+- [Event.Meta：事件自帶素材](#eventmeta事件自帶素材)
+- [併發與生命週期](#併發與生命週期)
+- [視窗容量與上限](#視窗容量與上限)
+- [生產環境的使用場景](#生產環境的使用場景)
+- [限制](#限制)
+- [設計不變量](#設計不變量)
+- [授權](#授權)
+
 ---
 
 ## 這是什麼
@@ -199,62 +218,10 @@ type Event struct {
 
 ---
 
-## API 一覽
+## API
 
-### 觀測
-
-```go
-engine.Observe(ruleID, key string, v float64, at time.Time)
-engine.ObserveMeta(ruleID, key string, v float64, at time.Time, meta any)
-engine.ObserveEvent(ruleID, key string, at time.Time)              // 值固定為 1，供 log 命中等事件型觀測
-engine.ObserveEventMeta(ruleID, key string, at time.Time, meta any)
-engine.Touch(ruleID, key string, at time.Time)                     // 「存在但本輪無有效值」
-```
-
-未知 `ruleID` 靜默忽略（與 `SetRules` 競態屬正常）。
-
-`Touch` 用於 counter 首輪或 reset 這類「series 確實還在，但這輪算不出值」的情況：
-只更新最後觀測時間以抑制 `Stale`／`Vanish`，**不推進視窗、不評估條件**。
-凍結持續到下一筆真觀測——期間 `Tick` 也不會拿視窗裡的舊值促發條件（舊值已不可信）。
-
-### 時間推進
-
-```go
-engine.Tick(now time.Time)                              // 由呼叫端既有迴圈驅動
-engine.Run(ctx context.Context, interval time.Duration) // 引擎自行定時 Tick
-```
-
-`Tick` 負責：時間相依條件的重評（視窗衰減）、`Stale`／`Vanish` 偵測、`Reminder` 補發。
-若規則不含時間視窗條件、也關閉了 Stale/Vanish（`StaleAfter: -1, VanishAfter: -1`）
-且沒有 `Reminder`，就不需要 `Tick`——狀態純由觀測驅動。
-
-### 規則與狀態變更
-
-```go
-engine.SetRules(rules []Rule)      // 熱更新；消失的規則靜默清除狀態
-engine.Forget(ruleID, key string)  // 靜默移除單一 key，不發事件
-engine.ForgetRule(ruleID string)   // 靜默清除規則下全部 key，規則保留
-```
-
-### 查詢（handler 內可安全呼叫）
-
-```go
-engine.Has(ruleID, key string) bool
-engine.State(ruleID, key string) (State, Severity, bool)
-engine.Snapshot() []Event // 目前所有 Firing/Stale 狀態，依 rule、key 排序
-```
-
-### 建構選項
-
-```go
-alarm.New(handler,
-    alarm.WithDefaultStale(d),   // 未逐條設定 StaleAfter 時的預設（0＝關閉）
-    alarm.WithDefaultVanish(d),  // 預設 1 小時
-    alarm.WithDefaultMaxKeys(n), // 預設 1000
-    alarm.WithClock(now),        // 供 Run 與 Snapshot 使用，測試可注入
-    alarm.WithLogf(logf),        // 引擎不依賴任何 log 套件
-)
-```
+各方法的簽章與完整語意以 godoc 為單一真相源：
+**[pkg.go.dev/github.com/waylen888/alarm](https://pkg.go.dev/github.com/waylen888/alarm)**。
 
 ---
 
@@ -282,13 +249,47 @@ reset 產生的負差分交由 judge 函式自行判定。
 
 ### 自訂條件
 
-實作 `Condition` 即可。另有三個選配介面讓引擎把視窗配置得更準；它們是未匯出方法，
-外部 package 的條件無法實作，需要這些提示時請以 `All`／`Any` 組合內建條件：
+`Condition` 就是本 package 的擴充點。在自己的 package 實作它，引擎待之與內建條件完全相同：
 
 ```go
-minPoints() int           // 判斷所需的最少觀測筆數，決定視窗初始容量（未實作以 64 計）
-minSpan() time.Duration   // 時間視窗型條件的跨度，讓引擎依觀測密度自動擴容
-measure(w Window) float64 // 命中時填入 Event.Value 的量測值（未實作以最後觀測值計）
+type Condition interface{ Breach(w Window) bool }
+```
+
+另有三個選配介面，實作用得上的即可，引擎會據此配置視窗與回報量測值：
+
+| 介面 | 方法 | 告訴引擎 | 未實作時的預設 |
+| --- | --- | --- | --- |
+| `PointsHinter` | `MinPoints() int` | 判斷所需的最少觀測筆數 | 64 筆 |
+| `SpanHinter` | `MinSpan() time.Duration` | 判斷涵蓋的時間跨度，視窗會為此擴容 | 無跨度 |
+| `Measurer` | `Measure(w Window) float64` | 要填進 `Event.Value` 的量測值 | 最後觀測值 |
+
+有沒有宣告差很多：一個要看 200 筆樣本卻什麼都沒宣告的條件，只會拿到 64 筆的視窗，
+永遠不可能成立；時間型條件不宣告跨度，視窗一滿就會被筆數上限靜默截斷。
+
+```go
+// 最近 n 筆的平均值超過 limit 即成立。
+type meanOver struct {
+    n     int
+    limit float64
+}
+
+func (c meanOver) Breach(w alarm.Window) bool { return c.mean(w) > c.limit }
+
+func (c meanOver) MinPoints() int { return c.n }
+
+func (c meanOver) Measure(w alarm.Window) float64 { return c.mean(w) } // 回報平均值，而非最後一筆
+
+func (c meanOver) mean(w alarm.Window) float64 {
+    pts := w.LastN(c.n)
+    if len(pts) < c.n {
+        return 0
+    }
+    var sum float64
+    for _, p := range pts {
+        sum += p.Value
+    }
+    return sum / float64(len(pts))
+}
 ```
 
 條件實作**必須無狀態**——狀態由引擎持有，規則熱更新才能安全替換條件。
