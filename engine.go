@@ -148,7 +148,13 @@ type keyState struct {
 }
 
 func newRuleRuntime(r Rule) *ruleRuntime {
-	// Levels 由高至低排序,評估時取最高成立等級
+	// Levels 由高至低排序,評估時取最高成立等級。r 是 Rule 的複本,但
+	// r.Levels 只複製了 slice header,底層陣列仍與呼叫端共用——就地排序
+	// 會把呼叫端自己的 []Level 重排。先複製再排序,newRuleRuntime 因此
+	// 不會寫穿到呼叫端持有的記憶體。
+	levels := make([]Level, len(r.Levels))
+	copy(levels, r.Levels)
+	r.Levels = levels
 	sort.SliceStable(r.Levels, func(i, j int) bool {
 		return r.Levels[i].Severity > r.Levels[j].Severity
 	})
