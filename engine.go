@@ -15,7 +15,7 @@ const (
 	defaultMaxKeys = 1000
 	defaultVanish  = time.Hour
 	minRingCap     = 8
-	maxRingCap     = 4096
+	maxRingCap     = MaxWindowPoints
 )
 
 // MaxWindowPoints is the hard cap on how many observations one key's window
@@ -23,7 +23,7 @@ const (
 // CountInWindow, say) can never be satisfied; validate user input against
 // this constant in your configuration layer, since all the engine can do is
 // log a warning from SetRules.
-const MaxWindowPoints = maxRingCap
+const MaxWindowPoints = 4096
 
 // ClampPoints clamps the N of a "consecutive/any N samples" condition to the
 // window cap. An N above MaxWindowPoints can never be satisfied, because the
