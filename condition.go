@@ -10,44 +10,62 @@ type Condition interface {
 	Breach(w Window) bool
 }
 
-// pointsHinter 條件可宣告判斷所需的最少觀測筆數,引擎據此配置視窗初始容量。
-// 未實作者以 defaultMinPoints 計。
-type pointsHinter interface {
-	minPoints() int
+// PointsHinter is an optional interface a Condition may implement to declare
+// the minimum number of observations its judgement needs. The engine uses it
+// to size a key's window when the rule is installed. A Condition that does not
+// implement it is assumed to need 64 points.
+//
+// Declare this whenever the judgement inspects a fixed number of samples: a
+// window sized too small can never satisfy the condition, and the engine has
+// no other way to know.
+type PointsHinter interface {
+	MinPoints() int
 }
 
-// spanHinter 時間視窗型條件可宣告判斷所需的時間跨度。引擎在視窗滿且
-// 最舊觀測仍落在跨度內時自動擴容(至 maxRingCap),條件不需預估取樣頻率,
-// 時間視窗也不會被筆數上限靜默截斷。
-type spanHinter interface {
-	minSpan() time.Duration
+// SpanHinter is an optional interface a Condition may implement to declare the
+// time span its judgement covers. When the window is full and its oldest
+// observation still falls inside the declared span, the engine grows the
+// window (up to MaxWindowPoints) rather than dropping that observation. A
+// Condition that does not implement it declares a span of zero.
+//
+// Declare this for any time-based judgement. It is what frees the condition
+// from having to guess the sampling frequency, and what stops a time window
+// from being silently truncated by the point cap.
+type SpanHinter interface {
+	MinSpan() time.Duration
 }
 
-// measurer 條件可提供命中時的量測值(次數/速率),填入 Event.Value;
-// 未實作者以最後觀測值計。
-type measurer interface {
-	measure(w Window) float64
+// Measurer is an optional interface a Condition may implement to supply the
+// value reported in Event.Value — a count, a rate, or whatever quantity the
+// judgement is actually about. A Condition that does not implement it reports
+// the most recent observed value.
+//
+// Declare this when the last raw observation would misrepresent the breach,
+// as it does for a condition that judges a counter's increment rather than
+// the counter itself.
+type Measurer interface {
+	Measure(w Window) float64
 }
 
 const defaultMinPoints = 64
 
 func minPointsOf(c Condition) int {
-	if h, ok := c.(pointsHinter); ok {
-		return h.minPoints()
+	if h, ok := c.(PointsHinter); ok {
+		return h.MinPoints()
 	}
 	return defaultMinPoints
 }
 
 func minSpanOf(c Condition) time.Duration {
-	if h, ok := c.(spanHinter); ok {
-		return h.minSpan()
+	if h, ok := c.(SpanHinter); ok {
+		return h.MinSpan()
 	}
 	return 0
 }
 
 func measureOf(c Condition, w Window) float64 {
-	if m, ok := c.(measurer); ok {
-		return m.measure(w)
+	if m, ok := c.(Measurer); ok {
+		return m.Measure(w)
 	}
 	if p, ok := w.Last(); ok {
 		return p.Value
@@ -72,7 +90,7 @@ func (c threshold) Breach(w Window) bool {
 	return ok && c.judge(p.Value)
 }
 
-func (c threshold) minPoints() int { return 1 }
+func (c threshold) MinPoints() int { return 1 }
 
 // ConsecutiveN breaches when the most recent n observations all satisfy
 // judge. Fewer than n observations never breach.
@@ -98,7 +116,7 @@ func (c consecutiveN) Breach(w Window) bool {
 	return true
 }
 
-func (c consecutiveN) minPoints() int { return c.n }
+func (c consecutiveN) MinPoints() int { return c.n }
 
 // AnyN breaches when any of the most recent n observations satisfies judge.
 // Fewer than n observations never breach.
@@ -124,7 +142,7 @@ func (c anyN) Breach(w Window) bool {
 	return false
 }
 
-func (c anyN) minPoints() int { return c.n }
+func (c anyN) MinPoints() int { return c.n }
 
 // ConsecutiveDeltaN breaches when the most recent n adjacent deltas all
 // satisfy judge, which requires n+1 observations. It is for judging a
@@ -153,9 +171,9 @@ func (c consecutiveDeltaN) Breach(w Window) bool {
 	return true
 }
 
-func (c consecutiveDeltaN) minPoints() int { return c.n + 1 }
+func (c consecutiveDeltaN) MinPoints() int { return c.n + 1 }
 
-func (c consecutiveDeltaN) measure(w Window) float64 {
+func (c consecutiveDeltaN) Measure(w Window) float64 {
 	pts := w.LastN(2)
 	if len(pts) < 2 {
 		return 0
@@ -179,11 +197,11 @@ func (c countInWindow) Breach(w Window) bool {
 	return w.Count(c.window) >= c.n
 }
 
-func (c countInWindow) minPoints() int { return c.n }
+func (c countInWindow) MinPoints() int { return c.n }
 
-func (c countInWindow) minSpan() time.Duration { return c.window }
+func (c countInWindow) MinSpan() time.Duration { return c.window }
 
-func (c countInWindow) measure(w Window) float64 {
+func (c countInWindow) Measure(w Window) float64 {
 	return float64(w.Count(c.window))
 }
 
@@ -221,11 +239,11 @@ func (c rateInWindow) Breach(w Window) bool {
 	return ok && c.judge(rate)
 }
 
-func (c rateInWindow) minPoints() int { return defaultMinPoints }
+func (c rateInWindow) MinPoints() int { return defaultMinPoints }
 
-func (c rateInWindow) minSpan() time.Duration { return c.window }
+func (c rateInWindow) MinSpan() time.Duration { return c.window }
 
-func (c rateInWindow) measure(w Window) float64 {
+func (c rateInWindow) Measure(w Window) float64 {
 	rate, _ := c.rate(w)
 	return rate
 }
@@ -250,7 +268,7 @@ func (c combined) Breach(w Window) bool {
 	return c.all
 }
 
-func (c combined) minPoints() int {
+func (c combined) MinPoints() int {
 	max := 1
 	for _, sub := range c.cs {
 		if n := minPointsOf(sub); n > max {
@@ -260,7 +278,7 @@ func (c combined) minPoints() int {
 	return max
 }
 
-func (c combined) minSpan() time.Duration {
+func (c combined) MinSpan() time.Duration {
 	var max time.Duration
 	for _, sub := range c.cs {
 		if d := minSpanOf(sub); d > max {

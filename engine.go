@@ -117,7 +117,7 @@ func New(h Handler, opts ...Option) *Engine {
 type ruleRuntime struct {
 	rule       Rule
 	keys       map[string]*keyState
-	ringCap    int           // 初始視窗容量(筆數制,由條件 minPoints 決定)
+	ringCap    int           // 初始視窗容量(筆數制,由條件 MinPoints 決定)
 	needPoints int           // 條件宣告所需筆數(未夾限),> maxRingCap 代表條件不可能成立
 	span       time.Duration // 條件所需時間跨度(0=無時間視窗條件),視窗依此動態擴容
 	overCap    bool          // MaxKeys 已滿,只 log 一次
