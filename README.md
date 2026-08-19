@@ -360,8 +360,10 @@ Worth knowing before reaching for it:
   `ClearFor` to at least as long as you expect an incident to last, and do not template a
   recovery message off `Event.Value`. `Fixed` has no such behaviour.
 - **Name the rules you want, one per `Level`.** Naming none enables all eight, which
-  false-alarms roughly once every 31 observations on an in-control process, and rule 7 is
-  a baseline-maintenance signal that does not belong in a paging rule. Give each rule its
+  false-alarms once every 47 observations on an in-control process against 215 for rule 1
+  alone, and rule 7 is a baseline-maintenance signal that does not belong in a paging rule.
+  No rule set makes this safe for a pager by itself — see the measured table in the package
+  documentation. Give each rule its
   own `alarm.Level`: `Event` carries a single float, so bundling several rules into one
   condition loses which of them fired, while levels share one window and let `Severity`
   say so.

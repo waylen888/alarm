@@ -61,7 +61,7 @@
 // # Baselines
 //
 // Every control chart needs a centre line and a dispersion estimate, and
-// where they come from decides everything else. Three are supplied:
+// where they come from decides everything else. Four are supplied:
 //
 //   - Fixed, for a metric whose normal range is genuinely known.
 //   - Trailing, mean and sample standard deviation over the observations
@@ -208,35 +208,65 @@
 // 91.75, against 370.4 for a three-sigma limit alone. Nelson's eight include
 // those four and four more.
 //
-// Measured over 400,000 in-control observations of a normal process, judged
-// the way these conditions judge — a rule breaches when it completes at the
-// newest observation, evaluated on every observation:
+// Measured over 200,000 in-control observations of a normal process, judged
+// the way these conditions judge. The figure is observations per false alarm
+// episode — consecutive evaluations of a run-based rule share all but one
+// point, so one false alarm persists for several observations and an operator
+// sees one alert, not several. The For columns restrict that count to
+// episodes long enough to survive a Rule.For of that many sampling intervals.
+// The harness is TestFalseAlarmRates in this package; the numbers are
+// reproducible rather than quoted.
 //
-//	rule 1, Fixed baseline           one false breach every 373 observations
-//	rule 1, Trailing(50)             one every 222
-//	rule 2, Trailing(50)             one every 170
-//	rule 7, Trailing(50)             one every 236
-//	rules 1 and 2, Trailing(50)      one every  96
-//	all eight, Trailing(50)          one every  31
+//	rules      baseline             For=0   For=2   For=3
+//	rule 1     Fixed                  347   never   never
+//	rule 1     Trailing(50)           215   never   never
+//	rule 1     Trailing(200)          304   never   never
+//	rule 1     TrailingRange(50)      186   never   never
+//	rules 1,2  Trailing(50)           131    1438    2701
+//	all eight  Fixed                   65     552     980
+//	all eight  Trailing(50)            47     393     727
+//	all eight  Trailing(200)           61     498     908
+//	all eight  TrailingRange(50)       45     354     620
 //
-// At a ten-second sampling interval, all eight rules is a false breach every
-// five minutes, per key. Naming no rules enables all eight, so the shortest
-// call is also the noisiest; name the rules you want. Rule 7 in particular is
-// a baseline-maintenance signal — its own documentation says the useful
-// response is to re-estimate, not to page — and it does not belong in a
-// paging rule alongside rule 1.
+// Read four things out of that table.
 //
-// Two further effects visible in that table. A trailing baseline is itself
-// estimated, and the estimation error adds variance the limits do not account
-// for, which is why rule 1 over Trailing(50) false-alarms two-thirds more
-// often than the textbook 370.4 the same rule achieves against a known
-// baseline; Quesenberry (Journal of Quality Technology 25(4), 1993) puts the
-// reference size needed for individuals limits to behave like known-parameter
-// limits at the order of 300 observations. And the rules assume independent
-// observations. Monitoring data sampled at second-to-minute granularity is
-// usually autocorrelated, which inflates the run-based rules (2, 3, 6, 7) and
-// EWMA considerably beyond the numbers above. Sampling at an interval longer
-// than the metric's autocorrelation time is the practical mitigation.
+// The rule set dominates. All eight against a perfectly known baseline still
+// false-alarms once every 65 observations, against 347 for rule 1 on the same
+// baseline. Estimating the baseline costs a further factor of about 1.4
+// (65 to 47), and raising the reference size to 200 — the order Quesenberry
+// (Journal of Quality Technology 25(4), 1993) puts the recovery of
+// known-parameter behaviour at — recovers most but not all of it. Naming no
+// rules enables all eight, so the shortest call is also the noisiest; name
+// the rules you want.
+//
+// For is powerful and it is not a damper. All eight with For=3 is quieter
+// than rule 1 alone with no gate, which looks like a bargain until the rule 1
+// rows are read: a three-sigma excursion essentially never persists for three
+// consecutive observations, in control or out of it, so For does not damp
+// rule 1, it deletes it. What For actually does is silently select for the
+// rules whose signals are runs. If that is what you want, ask for it by
+// naming those rules.
+//
+// TrailingRange is the noisiest baseline here, by a little. Being blind to
+// level, it is also blind to legitimate level variation, so it estimates a
+// smaller sigma than Trailing on data that has no drift for it to ignore.
+// That is the price of the property it exists for; on a metric with a real
+// cycle the comparison runs the other way.
+//
+// No rule set makes this constructor safe for a pager on its own. At ten
+// second sampling, all eight is a false alarm every eight minutes per key,
+// and rule 1 alone is one every thirty-six — which across a thousand keys is
+// still one every two seconds. Safety comes from what is downstream: naming
+// rules, For, ClearFor or Clear, severity levels, cardinality caps, and
+// grouping in the handler. Rule 7 in particular is a baseline-maintenance
+// signal — its own documentation says the useful response is to re-estimate,
+// not to page — and does not belong in a paging rule alongside rule 1.
+//
+// The rules also assume independent observations. Monitoring data sampled at
+// second-to-minute granularity is usually autocorrelated, which inflates the
+// run-based rules (2, 3, 6, 7) and EWMA beyond the numbers above, so treat
+// them as a floor. Sampling at an interval longer than the metric's
+// autocorrelation time is the practical mitigation.
 //
 // # Metrics these do not work on
 //
