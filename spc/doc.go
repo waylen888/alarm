@@ -95,6 +95,13 @@
 // interface accommodates one: implement Baseline over a time-series store and
 // pass it to either constructor. Nothing here needs to change.
 //
+// Such a baseline should also implement RefSizer and declare RefPoints of
+// zero, since it reads its reference from the store rather than from the
+// window. A baseline that declares nothing is assumed to need a dispersion
+// estimate of its own and is given at least MinRefPoints observations, which
+// for a store-backed one is two observations of pointless waiting before the
+// condition can first judge.
+//
 // # Sizing the window
 //
 // Both conditions implement alarm.PointsHinter, and their MinPoints is the

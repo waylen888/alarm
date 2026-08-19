@@ -121,6 +121,14 @@ func (c conditionBase) split(w alarm.Window) (test []float64, centre, sigma floa
 // condition holds no state and can be hot-swapped. Its memory is exactly the
 // window's length: see the package documentation.
 //
+// ref is how many observations preceding the ones under test are handed to
+// the baseline. A baseline that declares a larger requirement of its own —
+// Trailing, TrailingRobust and TrailingRange all declare the n they were
+// built with — overrides it, because honouring the smaller number would
+// leave Estimate reporting false on every evaluation. So Nelson(Trailing(50),
+// 10, ...) reads 50 reference observations, not 10. A baseline that declares
+// nothing gets at least MinRefPoints.
+//
 // MinPoints is the largest Points() among the enabled rules plus the
 // reference size, so a Nelson(Trailing(50), 50, []Rule{Rule7}) condition declares 65.
 // Getting that wrong yields a condition that never breaches, so the two are
@@ -203,6 +211,13 @@ func knownRules(rules []Rule) []Rule {
 // This is the tool for a small sustained shift: one that Nelson rule 1 will
 // never see because it is nowhere near three sigma, and that rule 2 sees only
 // nine observations after it started.
+//
+// ref is how many observations preceding the ones under test are handed to
+// the baseline. A baseline that declares a larger requirement of its own —
+// Trailing, TrailingRobust and TrailingRange all declare the n they were
+// built with — overrides it, because honouring the smaller number would
+// leave Estimate reporting false on every evaluation. So EWMA(Trailing(50), 10, ...) reads 50 reference observations, not 10. A baseline that declares
+// nothing gets at least MinRefPoints.
 //
 // lambda selects how much history the statistic keeps, and MinPoints follows
 // from it rather than being chosen: the condition judges EWMAMinPoints(lambda)
