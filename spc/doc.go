@@ -68,6 +68,19 @@
 //     preceding the ones under test.
 //   - TrailingRobust, median and MAD·MADScale over the same, for a reference
 //     period that may contain spikes — which monitoring data usually does.
+//   - TrailingRange, mean and mean moving range over the same, for a
+//     reference period that drifts — which a metric with a daily cycle does
+//     on every evaluation.
+//
+// The last two answer opposite problems and neither answers both. A sample
+// standard deviation and a MAD are global measures of dispersion, so drift
+// inside the reference period inflates them and hides the shift that follows;
+// a moving range is local and does not see the level, but a single outlier
+// contributes two large ranges to it. Pick by which the metric has. Measured
+// on a reference period whose level climbs while its scatter does not, a shift
+// four units past where the reference ended reads 2.2 sigma to Trailing, 1.8
+// to TrailingRobust and 19.2 to TrailingRange; with one large outlier in an
+// otherwise steady reference instead, the same three read 0.6, 4.1 and 1.3.
 //
 // The observations under test are never part of their own baseline. A
 // sustained shift allowed into its own centre line drags the centre after it
@@ -239,7 +252,8 @@
 //   - A low-cardinality integer metric. MAD is zero as soon as more than half
 //     the reference observations share a value, so TrailingRobust is dead on
 //     a mostly-zero error count — which is one of the most commonly alerted
-//     metric shapes there is.
+//     metric shapes there is. TrailingRange survives this one: a moving range
+//     exists as long as any two adjacent observations differ.
 //
 // These conditions are for metrics that are always noisy. For a metric that
 // is usually flat and occasionally not, an alarm.Threshold is the right tool,

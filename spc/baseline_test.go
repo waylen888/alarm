@@ -80,6 +80,106 @@ func TestTrailingRobust(t *testing.T) {
 	}
 }
 
+func TestTrailingRange(t *testing.T) {
+	// mean 3.75; moving ranges 3, 2, 6, mean 11/3.
+	ref := []float64{1, 4, 2, 8}
+	c, sig, ok := TrailingRange(4).Estimate(ref)
+	if !ok {
+		t.Fatal("TrailingRange reported false")
+	}
+	close(t, c, 3.75, "centre")
+	close(t, sig, (11.0/3.0)/MovingRangeScale, "sigma")
+
+	if _, _, ok := TrailingRange(32).Estimate(steady(31)); ok {
+		t.Error("TrailingRange(32) with 31 observations should report false")
+	}
+	if _, _, ok := TrailingRange(8).Estimate(make([]float64, 8)); ok {
+		t.Error("TrailingRange over a constant series should report false, not sigma 0")
+	}
+}
+
+// The reason TrailingRange exists: drift inside the reference period is
+// absorbed into a sample standard deviation as though it were noise, and the
+// inflated sigma hides a real shift. A moving range does not see the level,
+// so it estimates the scatter the process actually has.
+func TestTrailingRangeSeesThroughDriftInTheReference(t *testing.T) {
+	// The level climbs 100 -> 125 across the reference period while the
+	// scatter stays around half a unit. The test point sits four units above
+	// where the reference left off.
+	ref := make([]float64, 50)
+	for i := range ref {
+		ref[i] = 100 + 0.5*float64(i) + steady(50)[i] - 100
+	}
+	shift := ref[len(ref)-1] + 4
+
+	plain, ok := z(Trailing(50), ref, shift)
+	if !ok {
+		t.Fatal("Trailing reported false")
+	}
+	if plain > 3 {
+		t.Errorf("Trailing z = %v; want <= 3 — the drift is supposed to mask the shift here", plain)
+	}
+
+	robust, ok := z(TrailingRobust(50), ref, shift)
+	if !ok {
+		t.Fatal("TrailingRobust reported false")
+	}
+	if robust > 3 {
+		t.Errorf("TrailingRobust z = %v; want <= 3 — a median and MAD are equally blind to drift", robust)
+	}
+
+	local, ok := z(TrailingRange(50), ref, shift)
+	if !ok {
+		t.Fatal("TrailingRange reported false")
+	}
+	if local <= 3 {
+		t.Errorf("TrailingRange z = %v; want > 3", local)
+	}
+	t.Logf("drift in the reference: Trailing z = %.2f, TrailingRobust z = %.2f, TrailingRange z = %.2f",
+		plain, robust, local)
+}
+
+// The honest ordering on the other failure mode. A single outlier contributes
+// two moving ranges out of n-1, so TrailingRange resists it far better than
+// Trailing and nothing like as well as TrailingRobust. Neither of the two
+// baselines that survive drift survives outliers, and vice versa.
+func TestTrailingRangeIsOnlyPartlyResistantToAnOutlier(t *testing.T) {
+	ref := steady(50)
+	ref[20] = 130
+	const shift = 103
+
+	plain, _ := z(Trailing(50), ref, shift)
+	local, _ := z(TrailingRange(50), ref, shift)
+	robust, _ := z(TrailingRobust(50), ref, shift)
+
+	if !(plain < local && local < robust) {
+		t.Errorf("expected Trailing < TrailingRange < TrailingRobust, got %.2f, %.2f, %.2f", plain, local, robust)
+	}
+	if local > 3 {
+		t.Errorf("TrailingRange z = %v; a single large outlier still masks the shift for it", local)
+	}
+	t.Logf("one outlier: Trailing z = %.2f, TrailingRange z = %.2f, TrailingRobust z = %.2f", plain, local, robust)
+}
+
+// A low-cardinality integer metric has a MAD of zero as soon as more than half
+// the reference shares a value, which leaves TrailingRobust unable to estimate
+// and any condition built on it permanently false. A moving range exists as
+// long as any two adjacent observations differ.
+func TestTrailingRangeEstimatesWhereMADCannot(t *testing.T) {
+	counter := make([]float64, 50)
+	for i := range counter {
+		if i%7 == 0 {
+			counter[i] = 1
+		}
+	}
+	if _, _, ok := TrailingRobust(50).Estimate(counter); ok {
+		t.Error("TrailingRobust should not be able to estimate a mostly-zero counter")
+	}
+	if _, _, ok := TrailingRange(50).Estimate(counter); !ok {
+		t.Error("TrailingRange should be able to estimate a mostly-zero counter")
+	}
+}
+
 // A trailing baseline uses the n observations adjacent to the test points,
 // not the oldest n: a baseline drawn from an hour ago describes a process
 // that may no longer exist.
@@ -99,6 +199,9 @@ func TestTrailingClampsNBelowTwo(t *testing.T) {
 		}
 		if got := TrailingRobust(n).(RefSizer).RefPoints(); got != 2 {
 			t.Errorf("TrailingRobust(%d).RefPoints() = %d, want 2", n, got)
+		}
+		if got := TrailingRange(n).(RefSizer).RefPoints(); got != 2 {
+			t.Errorf("TrailingRange(%d).RefPoints() = %d, want 2", n, got)
 		}
 	}
 }

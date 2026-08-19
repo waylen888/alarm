@@ -101,14 +101,13 @@ func (b fixed) Estimate([]float64) (float64, float64, bool) {
 //     global measure of dispersion and cannot tell level variation from
 //     scatter. On a metric with a daily cycle — the case this package exists
 //     for — that inflation is present on essentially every evaluation, and it
-//     desensitises every rule. Classic individuals-chart practice estimates
-//     sigma from the mean moving range instead, MR/1.128, precisely because a
-//     local estimate is blind to level. TrailingRobust does not fix this:
-//     median and MAD are equally global, and resist outliers rather than
-//     drift.
+//     desensitises every rule. Use TrailingRange, whose estimator is local
+//     and does not see the level. TrailingRobust does not fix this: median
+//     and MAD are equally global, and resist outliers rather than drift.
 //
-// Both baselines here are therefore conservative on a cyclical metric: they
-// under-report rather than over-report.
+// The two failure modes want opposite estimators, and no baseline here
+// survives both. Pick by which one the metric actually has: outliers in the
+// reference period, or drift through it.
 func Trailing(n int) Baseline { return trailing{n: atLeast(n, 2)} }
 
 type trailing struct{ n int }
@@ -174,6 +173,62 @@ func (b trailingRobust) Estimate(ref []float64) (float64, float64, bool) {
 		return 0, 0, false
 	}
 	sigma := mad * MADScale
+	if !finite(sigma) || sigma <= 0 {
+		return 0, 0, false
+	}
+	return centre, sigma, true
+}
+
+// TrailingRange estimates the centre line from the mean of the n
+// observations preceding the points under test, and the dispersion from
+// their mean moving range scaled by MovingRangeScale. n below 2 is raised
+// to 2.
+//
+// This is the classic individuals-chart estimator, and the reason to prefer
+// it over Trailing is drift. A sample standard deviation is a global measure
+// of dispersion: any drift, ramp or partial cycle inside the reference period
+// is absorbed into it as though it were noise, and the resulting sigma can be
+// several times the process's actual scatter, which desensitises every rule
+// judged against it. On a metric with a daily cycle — the case this package
+// exists for — that inflation is present on essentially every evaluation. A
+// mean moving range looks only at consecutive differences and does not see
+// the level, so it estimates the noise rather than the noise plus the cycle.
+//
+// It also survives two cases the other baselines do not. A single outlier
+// contributes two large moving ranges out of n-1, where it contributes its
+// whole squared deviation to a sample standard deviation, so this is
+// considerably more resistant than Trailing though less so than
+// TrailingRobust. And a low-cardinality integer metric — an error count that
+// is mostly zero — has a moving range whenever any two adjacent observations
+// differ, where its MAD is zero as soon as more than half the reference
+// shares a value, which leaves TrailingRobust unable to estimate at all.
+//
+// The cost is sensitivity to autocorrelation. Consecutive observations of a
+// monitoring time series resemble each other more than independent ones
+// would, so the moving ranges are smaller than the process's dispersion
+// warrants and the limits come out too narrow. Trailing has the opposite
+// bias. Sampling at an interval longer than the metric's autocorrelation time
+// mitigates it; there is no estimator here that does.
+func TrailingRange(n int) Baseline { return trailingRange{n: atLeast(n, 2)} }
+
+type trailingRange struct{ n int }
+
+func (b trailingRange) RefPoints() int { return b.n }
+
+func (b trailingRange) Estimate(ref []float64) (float64, float64, bool) {
+	ref, ok := tail(ref, b.n)
+	if !ok {
+		return 0, 0, false
+	}
+	centre, ok := Mean(ref)
+	if !ok {
+		return 0, 0, false
+	}
+	mr, ok := MeanMovingRange(ref)
+	if !ok {
+		return 0, 0, false
+	}
+	sigma := mr / MovingRangeScale
 	if !finite(sigma) || sigma <= 0 {
 		return 0, 0, false
 	}

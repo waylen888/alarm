@@ -340,7 +340,16 @@ gross excursions, sustained shifts, trends, over-adjustment and mixtures. EWMA c
 small sustained shift that rule 1 never sees and rule 2 sees nine samples late. The centre
 line and dispersion come from a `Baseline`: `Fixed` for a known normal range, `Trailing`
 for mean and standard deviation over the preceding observations, `TrailingRobust` for
-median and MAD when the reference period may contain spikes.
+median and MAD when the reference period may contain spikes, `TrailingRange` for mean and
+mean moving range when it drifts.
+
+The last two answer opposite problems and neither answers both. A standard deviation and a
+MAD are global measures of dispersion, so drift through the reference period inflates them
+and hides the shift that follows; a moving range is local and cannot see the level, but one
+outlier contributes two large ranges to it. On a reference period whose level climbs while
+its scatter does not, a shift four units past where it ended reads 2.2σ to `Trailing`, 1.8σ
+to `TrailingRobust` and 19.2σ to `TrailingRange`; with one large outlier in a steady
+reference instead, the same three read 0.6σ, 4.1σ and 1.3σ. Pick by which the metric has.
 
 Worth knowing before reaching for it:
 

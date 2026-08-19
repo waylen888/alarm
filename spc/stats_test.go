@@ -95,6 +95,48 @@ func TestMADScaleAgreesWithStdDev(t *testing.T) {
 	}
 }
 
+func TestMeanMovingRange(t *testing.T) {
+	if _, ok := MeanMovingRange([]float64{5}); ok {
+		t.Error("one observation has no moving range")
+	}
+	if _, ok := MeanMovingRange([]float64{7, 7, 7}); ok {
+		t.Error("a constant series should report false, not zero")
+	}
+	// differences 3, 2, 6; mean 11/3.
+	mr, ok := MeanMovingRange([]float64{1, 4, 2, 8})
+	if !ok {
+		t.Fatal("MeanMovingRange reported false")
+	}
+	close(t, mr, 11.0/3.0, "MeanMovingRange")
+}
+
+// The property that distinguishes a moving range from the other two
+// estimators: it measures how far the series moves, not where it has been, so
+// drift inside the reference period does not enter it.
+func TestMeanMovingRangeIgnoresLevel(t *testing.T) {
+	steady := []float64{100, 101, 100, 101, 100, 101, 100, 101}
+	drifting := make([]float64, len(steady))
+	for i, v := range steady {
+		drifting[i] = v + 5*float64(i) // the same scatter, riding a ramp
+	}
+
+	flat, _ := MeanMovingRange(steady)
+	ramped, _ := MeanMovingRange(drifting)
+	sdFlat, _ := StdDev(steady)
+	sdRamped, _ := StdDev(drifting)
+
+	if sdRamped < sdFlat*5 {
+		t.Errorf("StdDev should have absorbed the ramp: %v -> %v", sdFlat, sdRamped)
+	}
+	if ramped < flat {
+		t.Errorf("the ramp only adds to each step, so the moving range cannot fall: %v -> %v", flat, ramped)
+	}
+	if ramped > flat*7 {
+		t.Errorf("moving range moved too far: %v -> %v", flat, ramped)
+	}
+	t.Logf("adding a ramp: StdDev %.2f -> %.2f, MeanMovingRange %.2f -> %.2f", sdFlat, sdRamped, flat, ramped)
+}
+
 // One outlier moves StdDev a long way and MAD not at all. This is the whole
 // reason TrailingRobust exists.
 func TestMADResistsAnOutlier(t *testing.T) {

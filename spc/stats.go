@@ -12,6 +12,14 @@ import (
 // chart whose limits are expressed in multiples of σ.
 const MADScale = 1.4826
 
+// MovingRangeScale converts a mean moving range into an estimate of the
+// standard deviation. It is the d2 constant for a subgroup of two, the
+// expected range of two observations from a standard normal distribution,
+// so sigma is estimated as MR/1.128. The constant is what makes
+// MeanMovingRange comparable to StdDev, and therefore usable as the
+// dispersion of a control chart whose limits are multiples of sigma.
+const MovingRangeScale = 1.128
+
 // Mean returns the arithmetic mean of xs. It reports false for an empty
 // slice or a non-finite result.
 func Mean(xs []float64) (float64, bool) {
@@ -101,6 +109,39 @@ func MAD(xs []float64) (float64, bool) {
 		return 0, false
 	}
 	return mad, true
+}
+
+// MeanMovingRange returns the mean of the absolute differences between
+// adjacent observations. It reports false for fewer than two observations, a
+// non-finite result, or a zero result.
+//
+// Unlike StdDev and MAD this is a local measure of dispersion: it looks only
+// at how far the series moves from one observation to the next, and so is
+// blind to where the level of the series has been. That is the whole point.
+// A sample standard deviation over a reference period containing a drift, a
+// ramp or part of a cycle absorbs that level variation as though it were
+// scatter, and returns a sigma several times larger than the noise the
+// process actually has. A mean moving range does not see it.
+//
+// The price is the mirror image: a mean moving range cannot tell a genuinely
+// noisy process from a smoothly drifting one, and on an autocorrelated series
+// it underestimates the dispersion, because consecutive observations resemble
+// each other more than independent ones would. Under-estimating sigma makes a
+// chart more sensitive, and a chart on autocorrelated data is already too
+// sensitive.
+func MeanMovingRange(xs []float64) (float64, bool) {
+	if len(xs) < 2 {
+		return 0, false
+	}
+	var sum float64
+	for i := 1; i < len(xs); i++ {
+		sum += math.Abs(xs[i] - xs[i-1])
+	}
+	mr := sum / float64(len(xs)-1)
+	if !finite(mr) || mr <= 0 {
+		return 0, false
+	}
+	return mr, true
 }
 
 func finite(x float64) bool { return !math.IsNaN(x) && !math.IsInf(x, 0) }
