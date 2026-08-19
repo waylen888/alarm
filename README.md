@@ -359,10 +359,13 @@ Worth knowing before reaching for it:
   in the middle of the incident, carrying a near-zero sigma distance as its evidence. Set
   `ClearFor` to at least as long as you expect an incident to last, and do not template a
   recovery message off `Event.Value`. `Fixed` has no such behaviour.
-- **The rules are a required argument.** There is no default, because no rule set is quiet
-  enough to be safe as one and which rules a metric deserves is a judgement about that
-  metric. `spc.AllRules()` gives the published procedure and false-alarms once every 47
-  observations on an in-control process, against 215 for rule 1 alone; rule 7 is a
+- **The rules are a required argument.** Omitting them is a compile error, because no rule
+  set is quiet enough to be a safe default and which rules a metric deserves is a judgement
+  about that metric. Passing an empty slice, or one naming no rule the package recognises,
+  is not an error: it installs `spc.DefaultRules()` — rule 1 alone — because a condition
+  that can never be true is a worse failure than a noisy one. `spc.AllRules()` gives the
+  published procedure and, over a `Trailing(50)` baseline, false-alarms once every 47
+  observations on an in-control process against 215 for rule 1 alone; rule 7 is a
   baseline-maintenance signal that does not belong in a paging rule at all. No rule set
   makes this safe for a pager by itself — see the measured table in the package
   documentation. Give each rule its own `alarm.Level`: `Event` carries a single float, so
@@ -696,8 +699,9 @@ to the engine features it needs.
 - **No persistence.** State is in memory and does not survive a restart. `Snapshot` exists so
   you can reconcile an external projection after one, but the engine itself starts cold —
   a key that was Firing before a restart will fire again once its condition is re-satisfied.
-- **No built-in statistical conditions.** Conditions are threshold- and count-shaped.
-  Anything more sophisticated is a `Condition` you write yourself.
+- **No statistical conditions in the core package.** The core conditions are threshold-
+  and count-shaped; control-chart conditions live in the [`spc` subpackage](#statistical-process-control-the-spc-subpackage),
+  and anything beyond that is a `Condition` you write yourself.
 
 ---
 

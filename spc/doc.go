@@ -26,9 +26,9 @@
 // # Layering
 //
 // Everything except the conditions themselves operates on []float64 and knows
-// nothing about windows, engines or events. Mean, StdDev, Median, MAD, the
-// Baseline implementations, Check and the EWMA functions are usable, and
-// testable, on their own. Only conditions.go imports alarm. That boundary is
+// nothing about windows, engines or events. Mean, StdDev, Median, MAD,
+// MeanMovingRange, the Baseline implementations, Check and the EWMA functions
+// are usable, and testable, on their own. Only conditions.go imports alarm. That boundary is
 // deliberate: it keeps the statistics available to anyone doing manufacturing
 // QA, data quality or batch analysis without the alerting engine attached.
 //
@@ -49,7 +49,7 @@
 // window's length. An EWMA recomputed over the last N observations is not the
 // same number as an EWMA carried forward since the process started. For an
 // exponentially decaying statistic the difference is bounded by the weight of
-// the oldest retained observation, (1-λ)^N, and EWMAMinPoints sizes the
+// the discarded history, (1-λ)^N, and EWMAMinPoints sizes the
 // window so that weight stays under EWMAResidualWeight — one percent. Below
 // that point count the statistic is measurably not the one it claims to be,
 // which is why MinPoints is derived from lambda rather than chosen.
@@ -97,10 +97,10 @@
 //
 // Such a baseline should also implement RefSizer and declare RefPoints of
 // zero, since it reads its reference from the store rather than from the
-// window. A baseline that declares nothing is assumed to need a dispersion
-// estimate of its own and is given at least MinRefPoints observations, which
-// for a store-backed one is two observations of pointless waiting before the
-// condition can first judge.
+// window, and be constructed with a ref of zero: the condition takes the
+// larger of the two, so declaring zero alone still leaves the caller's ref
+// standing. A baseline that declares nothing is assumed to need a dispersion
+// estimate of its own and is given at least MinRefPoints observations.
 //
 // # Sizing the window
 //
@@ -132,8 +132,15 @@
 //
 // Rule 8 follows Nelson's definition, which requires the eight points to fall
 // on both sides of the centre line. Without that requirement it would report
-// an ordinary sustained shift — already covered by rules 2 and 6 — as a
-// mixture of two populations.
+// an ordinary sustained shift as a mixture of two populations — and rule 6
+// has already reported it three observations earlier, since four of five
+// beyond one sigma is implied by eight of eight. Rule 2 has not: it needs
+// nine same-side points, and rule 8's window is eight.
+//
+// Rule 7's reading below assumes a Fixed baseline. Over a trailing baseline
+// sigma is re-estimated on every evaluation, so rule 7 is asking whether the
+// period just before the test points was noisier than the test points
+// themselves, which any heteroscedastic metric answers yes to regularly.
 //
 // The rules are Nelson, L. S., "The Shewhart Control Chart — Tests for
 // Special Causes", Journal of Quality Technology 16(4), 1984. Nothing here is
@@ -149,7 +156,7 @@
 // incident is the new normal, the chart reads in control, and the condition
 // goes false — with the metric still at its shifted level.
 //
-// So a breach against Trailing or TrailingRobust lasts on the order of `ref`
+// So a breach against any trailing baseline lasts on the order of `ref`
 // observations, whatever the incident does. In wall-clock terms that is `ref`
 // times the sampling interval. The engine will then emit a Resolve, and its
 // Event.Value will be a sigma distance near zero, measured against a centre
@@ -235,16 +242,17 @@
 //	all eight  Trailing(200)           61     498     908
 //	all eight  TrailingRange(50)       45     354     620
 //
-// Read four things out of that table.
+// Read five things out of that table.
 //
 // The rule set dominates. All eight against a perfectly known baseline still
 // false-alarms once every 65 observations, against 347 for rule 1 on the same
 // baseline. Estimating the baseline costs a further factor of about 1.4
 // (65 to 47), and raising the reference size to 200 — the order Quesenberry
 // (Journal of Quality Technology 25(4), 1993) puts the recovery of
-// known-parameter behaviour at — recovers most but not all of it. Naming no
-// rules enables all eight, so the shortest call is also the noisiest; name
-// the rules you want.
+// known-parameter behaviour at — recovers most but not all of it. Check
+// applies all eight when the caller names none, so the shortest call to it is
+// also the noisiest; Nelson takes its rules as a required argument and cannot
+// be called that way.
 //
 // For is powerful and it is not a damper. All eight with For=3 is quieter
 // than rule 1 alone with no gate, which looks like a bargain until the rule 1
@@ -260,7 +268,7 @@
 // That is the price of the property it exists for; on a metric with a real
 // cycle the comparison runs the other way.
 //
-// No rule set makes this constructor safe for a pager on its own. At ten
+// No rule set makes the Nelson constructor safe for a pager on its own. At ten
 // second sampling, all eight is a false alarm every eight minutes per key,
 // and rule 1 alone is one every thirty-six — which across a thousand keys is
 // still one every two seconds. Safety comes from what is downstream: naming
@@ -305,6 +313,15 @@
 // is open at the offending end is replaced by a documented default. The
 // alternative is a condition that is never true, which is the failure mode
 // this package is organised to avoid.
+//
+// A rule set is subject to the same policy. Unknown identifiers are dropped,
+// and a set that is empty — supplied empty, or emptied by that filter — is
+// replaced by DefaultRules, rule 1 alone. Omitting the argument is a compile
+// error; supplying an empty one is not, because the slice usually comes from
+// configuration and no signature can require a runtime value to be non-empty
+// without panicking on the very case it is meant to catch. Validate
+// config-derived rule sets with Rule.Valid at load time if you want a typo
+// reported.
 //
 // Because a constructor returns an alarm.Condition, the value it produced is
 // otherwise opaque. Both conditions implement String and report their

@@ -27,10 +27,10 @@ const (
 	// over-adjustment, or two interleaved sources sampled in turn.
 	Rule4
 	// Rule5 fires on two out of three consecutive points beyond two sigma on
-	// the same side: a medium shift.
+	// the same side, the last of the three being one of them: a medium shift.
 	Rule5
 	// Rule6 fires on four out of five consecutive points beyond one sigma on
-	// the same side: a small shift.
+	// the same side, the last of the five being one of them: a small shift.
 	Rule6
 	// Rule7 fires on fifteen consecutive points all within one sigma. In
 	// manufacturing this indicates stratification. In monitoring it much more
@@ -66,10 +66,13 @@ var allRules = []Rule{Rule1, Rule2, Rule3, Rule4, Rule5, Rule6, Rule7, Rule8}
 func AllRules() []Rule { return append([]Rule(nil), allRules...) }
 
 // DefaultRules returns the rule set a condition falls back to when it is given
-// no rule it recognises: rule 1 alone.
+// no rule it recognises: rule 1 alone. The returned slice is a copy and may be
+// modified.
 //
-// Rule 1 is the quietest of the eight and the one a reader who has not opened
-// the documentation already expects a control chart to apply — a three-sigma
+// Rule 1 is not the quietest of the eight — measured on an in-control process
+// against a known baseline it signals once every 373 observations, where rule
+// 8 signals once every 12,901 — but it is the one a reader who has not opened
+// the documentation already expects a control chart to apply: a three-sigma
 // excursion. It is a substitution for unusable input, not a recommendation:
 // the rules a metric deserves are a judgement about that metric, which is why
 // Nelson requires them rather than defaulting.
@@ -124,6 +127,13 @@ type Violation struct {
 // Check applies the named rules to series against the given centre line and
 // sigma, and returns every violation found. Passing no rules applies all
 // eight, which is the Nelson procedure as published.
+//
+// Rules 5 and 6 additionally require the point the rule completes at to be
+// beyond the limit itself. Nelson does not say so, and Minitab and JMP do not
+// implement it that way, but without it the rule completes at a point that is
+// comfortably in control — two of three beyond two sigma is satisfied by a
+// series that went out twice and has since recovered — and the violation then
+// reports the sigma distance of an observation that triggered nothing.
 //
 // Unknown rules are ignored, and a rule set consisting only of unknown rules
 // therefore matches nothing and yields no violations. That is not the same as

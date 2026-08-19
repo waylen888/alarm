@@ -16,8 +16,9 @@ import (
 // no nearest valid value.
 const (
 	// DefaultLambda is the smoothing factor used when the caller's lambda is
-	// not a finite number in (0,1]. 0.2 is the conventional choice for
-	// detecting shifts of roughly one sigma.
+	// not a finite number above zero. A lambda above 1 is clamped to 1
+	// instead, since that is a value in range. 0.2 is the conventional choice
+	// for detecting shifts of roughly one sigma.
 	DefaultLambda = 0.2
 	// DefaultL is the control limit width used when the caller's L is not a
 	// finite positive number. 3 mirrors the three-sigma limits of a Shewhart
@@ -31,7 +32,8 @@ const (
 // valid range is clamped to the nearest value inside it; an argument whose
 // range is open at the offending end, so that no nearest value exists, is
 // replaced by the documented default above. Unknown rule identifiers are
-// dropped, and a rule set that is empty after that means all eight.
+// dropped, and a rule set left empty by that — or empty to begin with — is
+// replaced by DefaultRules, rule 1 alone.
 //
 // The alternative — a condition that is silently and permanently false — is
 // the worst failure mode an alerting library has. The engine does have a
@@ -227,10 +229,12 @@ func knownRules(rules []Rule) []Rule {
 // window costs less than EWMAResidualWeight. For the default lambda of 0.2
 // that is 21 observations, and with a Trailing(50) baseline MinPoints is 71.
 //
-// lambda above 1 is clamped to 1, and a lambda so small that the derived point
-// count would not fit in alarm.MaxWindowPoints is raised to the smallest one
-// that does. A lambda that is not a finite number in (0,1] becomes
-// DefaultLambda, and an L that is not finite and positive becomes DefaultL.
+// lambda above 1 is clamped to 1, where the statistic is the last observation
+// and no history is kept. A lambda so small that the derived point count would
+// not fit in alarm.MaxWindowPoints alongside the reference observations is
+// raised to the smallest one that does. A lambda that is not a finite number
+// above zero becomes DefaultLambda, and an L that is not finite and positive
+// becomes DefaultL.
 func EWMA(b Baseline, ref int, lambda, L float64) alarm.Condition {
 	lambda = clampLambda(lambda)
 	if !finite(L) || L <= 0 {

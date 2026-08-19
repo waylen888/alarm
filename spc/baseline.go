@@ -181,7 +181,7 @@ func (b trailingRobust) Estimate(ref []float64) (float64, float64, bool) {
 
 // TrailingRange estimates the centre line from the mean of the n
 // observations preceding the points under test, and the dispersion from
-// their mean moving range scaled by MovingRangeScale. n below 2 is raised
+// their mean moving range divided by MovingRangeScale. n below 2 is raised
 // to 2.
 //
 // This is the classic individuals-chart estimator, and the reason to prefer
