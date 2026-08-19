@@ -1,13 +1,9 @@
 package spc_test
 
 import (
-	"bufio"
 	"flag"
 	"fmt"
 	"math/rand"
-	"os"
-	"strconv"
-	"strings"
 	"testing"
 	"time"
 
@@ -53,31 +49,65 @@ func TestFalseAlarmRates(t *testing.T) {
 	measured := make([]arlRow, len(configs))
 	breaches := make([][]bool, len(configs))
 
-	// One engine per configuration, because each needs its own window size and
-	// its own state. The series is generated once and shared, so that every
-	// configuration sees the identical realisation — the comparisons between
-	// rows below depend on that.
-	t.Run("measure", func(t *testing.T) {
+	// The return value matters. A subtest that fails leaves its slot either
+	// unwritten or written from a measurement it has just called wrong, and
+	// neither is fit to compare against doc.go, let alone write into it.
+	measuredOK := t.Run("measure", func(t *testing.T) {
 		for i, c := range configs {
 			t.Run(c.rules+"/"+c.baseline, func(t *testing.T) {
 				t.Parallel()
-				measured[i], breaches[i] = measure(t, c, series)
+				row, verdicts, err := measure(t, c, series)
+				if err != nil {
+					t.Fatal(err)
+				}
+				measured[i], breaches[i] = row, verdicts
 			})
 		}
 	})
-
-	rendered := renderARLTable(measured)
-	if *updateDoc {
-		if err := replaceARLTable(rendered); err != nil {
-			t.Fatalf("rewriting doc.go: %v", err)
-		}
-		t.Logf("doc.go updated:\n%s", rendered)
-		return
+	if !measuredOK {
+		t.Fatal("the measurement failed; doc.go was neither compared nor rewritten")
+	}
+	// Belt as well as braces. t.Run reports true for a subtest that skips, and
+	// a skip leaves the slot zero; this also catches a row written into the
+	// wrong slot, which no amount of pass-or-fail bookkeeping would.
+	if err := checkMeasured(configs, measured); err != nil {
+		t.Fatalf("the measurement is incomplete, so doc.go was neither compared nor rewritten: %v", err)
 	}
 
-	documented, err := readARLTable()
+	// Before -update, not after. These are the only assertions that know a
+	// number is wrong rather than merely different, and -update used to skip
+	// every one of them — so the mode that writes the documentation was the
+	// mode in which the package's own correctness argument did not run.
+	checkARLInvariants(t, series, configs, measured, breaches)
+
+	rendered := renderARLTable(measured)
+	if err := checkARLRoundTrip(rendered, measured); err != nil {
+		t.Fatalf("the rendered table does not parse back to what produced it: %v", err)
+	}
+
+	if *updateDoc {
+		if t.Failed() {
+			t.Fatal("-update refused: the measurement did not pass its own sanity checks")
+		}
+		if err := replaceARLTable(rendered, len(measured)); err != nil {
+			t.Fatalf("rewriting doc.go: %v", err)
+		}
+		// An update run is deliberately not a passing run, as math/rand's own
+		// updater does: the diff has to be read by a person before it lands.
+		t.Fatalf("doc.go rewritten; review the diff and re-run without -update:\n%s", rendered)
+	}
+
+	documented, documentedRows, err := readARLTable(len(measured))
 	if err != nil {
 		t.Fatalf("reading the table out of doc.go: %v", err)
+	}
+	// Compared twice on purpose. The row comparison names the cell that moved;
+	// the text comparison catches drift the parser normalises away.
+	for i, want := range measured {
+		if got := documentedRows[i]; !sameARLRow(got, want) {
+			t.Errorf("doc.go row %d: %s / %s %v, measured %s / %s %v",
+				i, got.rules, got.baseline, got.cols, want.rules, want.baseline, want.cols)
+		}
 	}
 	if documented != rendered {
 		t.Errorf("the measurement and the table in doc.go disagree.\n"+
@@ -86,7 +116,38 @@ func TestFalseAlarmRates(t *testing.T) {
 			documented, rendered)
 	}
 	t.Logf("\n%s", rendered)
+}
 
+// checkMeasured reports whether every configuration produced its own row in
+// its own slot. It is not a restatement of the subtests' verdicts: a subtest
+// can end without failing and still leave nothing behind.
+func checkMeasured(configs []arlConfig, rows []arlRow) error {
+	if len(rows) != len(configs) {
+		return fmt.Errorf("%d rows for %d configurations", len(rows), len(configs))
+	}
+	for i, c := range configs {
+		r := rows[i]
+		if !r.filled {
+			return fmt.Errorf("no row for %s / %s", c.rules, c.baseline)
+		}
+		if r.rules != c.rules || r.baseline != c.baseline {
+			return fmt.Errorf("row %d holds %s / %s, want %s / %s — a measurement wrote to the wrong slot",
+				i, r.rules, r.baseline, c.rules, c.baseline)
+		}
+		for j, col := range r.cols {
+			if col == 0 || col < -1 {
+				return fmt.Errorf("%s / %s: column %d is %d, which no measurement produces",
+					c.rules, c.baseline, j, col)
+			}
+		}
+	}
+	return nil
+}
+
+// checkARLInvariants holds the assertions that decide the numbers are
+// physical rather than merely reproducible.
+func checkARLInvariants(t *testing.T, series []float64, configs []arlConfig, measured []arlRow, breaches [][]bool) {
+	t.Helper()
 	arlOf := func(rules, baseline string) int {
 		for _, r := range measured {
 			if r.rules == rules && r.baseline == baseline {
@@ -133,28 +194,24 @@ func TestFalseAlarmRates(t *testing.T) {
 		// Not containment away from Fixed, for the reason above, but the
 		// counts still differ by a wide factor. The failure this catches is a
 		// point count that makes the larger set judge rule 1's window, which
-		// drives the ratio to 1.
+		// drives the ratio to one.
 		n1 := countTrue(breachIndex(configs, breaches, "rule 1", baseline))
 		n8 := countTrue(breachIndex(configs, breaches, "all eight", baseline))
 		if n8 < 3*n1 {
 			t.Errorf("%s: all eight breached %d observations against rule 1's %d, want at least three times as many",
 				baseline, n8, n1)
 		}
+	}
 
-		// An estimated baseline carries its own error and false alarms more
-		// often than a known one. The measured ratio is around 0.62 to 0.72;
-		// the margin is 0.9, which is roughly three seed-to-seed standard
-		// deviations away. Trailing(200) is deliberately not compared: its
-		// gap to Fixed is about 1.4 standard deviations, and asserting an
-		// ordering that thin would be encoding sampling noise as a law.
-		if baseline != "Trailing(50)" {
-			continue
-		}
-		for _, rules := range []string{"rule 1", "rules 1,2", "all eight"} {
-			if est, known := arlOf(rules, "Trailing(50)"), arlOf(rules, "Fixed"); float64(est) > 0.9*float64(known) {
-				t.Errorf("%s: Trailing(50)=%d against Fixed=%d, want appreciably noisier",
-					rules, est, known)
-			}
+	// An estimated baseline carries its own error and false alarms more often
+	// than a known one. The measured ratio is around 0.62 to 0.72; the margin
+	// is 0.9, roughly three seed-to-seed standard deviations away.
+	// Trailing(200) is deliberately not compared: its gap to Fixed is about
+	// 1.4 standard deviations, and asserting an ordering that thin would be
+	// encoding sampling noise as a law.
+	for _, rules := range []string{"rule 1", "rules 1,2", "all eight"} {
+		if est, known := arlOf(rules, "Trailing(50)"), arlOf(rules, "Fixed"); float64(est) > 0.9*float64(known) {
+			t.Errorf("%s: Trailing(50)=%d against Fixed=%d, want appreciably noisier", rules, est, known)
 		}
 	}
 }
@@ -213,12 +270,17 @@ func inControl(seed int64, n int) []float64 {
 // measure drives one configuration's real condition through a real engine,
 // one observation at a time, and returns the row for the table together with
 // the per-observation verdicts.
-func measure(t *testing.T, c arlConfig, series []float64) (arlRow, []bool) {
+// Preconditions come back as an error rather than as t.Fatalf. Fatalf inside
+// a parallel subtest ends that goroutine, so the caller's assignment never
+// runs and the caller keeps a zero row it cannot tell from a real one. The
+// judgements below stay on t: they are opinions about the measurement, not
+// failures to make one, and they leave the row assigned.
+func measure(t *testing.T, c arlConfig, series []float64) (arlRow, []bool, error) {
 	t.Helper()
 	cond := spc.Nelson(c.b, c.ref, c.set)
 	hinter, ok := cond.(alarm.PointsHinter)
 	if !ok {
-		t.Fatalf("%s / %s: the condition no longer declares MinPoints, so the window cannot be sized", c.rules, c.baseline)
+		return arlRow{}, nil, fmt.Errorf("%s / %s: the condition no longer declares MinPoints, so the window cannot be sized", c.rules, c.baseline)
 	}
 	need := hinter.MinPoints()
 
@@ -266,7 +328,7 @@ func measure(t *testing.T, c arlConfig, series []float64) (arlRow, []bool) {
 		episodes = append(episodes, run)
 	}
 	if len(episodes) == 0 {
-		t.Fatalf("%s / %s: no false alarm in %d evaluations, which no rule set does on an in-control process",
+		return arlRow{}, nil, fmt.Errorf("%s / %s: no false alarm in %d evaluations, which no rule set does on an in-control process",
 			c.rules, c.baseline, evals)
 	}
 
@@ -294,10 +356,11 @@ func measure(t *testing.T, c arlConfig, series []float64) (arlRow, []bool) {
 	}
 
 	return arlRow{
+		filled:   true,
 		rules:    c.rules,
 		baseline: c.baseline,
 		cols:     [3]int{arlAt(evals, episodes, 0), arlAt(evals, episodes, 2), arlAt(evals, episodes, 3)},
-	}, verdicts
+	}, verdicts, nil
 }
 
 // arlAt returns observations per episode long enough to survive a Rule.For of
@@ -343,87 +406,4 @@ func breachIndex(configs []arlConfig, breaches [][]bool, rules, baseline string)
 		}
 	}
 	panic("no such configuration: " + rules + " / " + baseline)
-}
-
-// arlRow is one line of the documented table. A column of -1 renders as
-// "never".
-type arlRow struct {
-	rules    string
-	baseline string
-	cols     [3]int
-}
-
-const (
-	arlHeader = "rules      baseline             For=0   For=2   For=3"
-	arlFormat = "%-11s%-18s%8s%8s%8s"
-)
-
-func renderARLTable(rows []arlRow) string {
-	var b strings.Builder
-	fmt.Fprintf(&b, "//\t%s\n", arlHeader)
-	for _, r := range rows {
-		cells := make([]string, 3)
-		for i, c := range r.cols {
-			if c < 0 {
-				cells[i] = "never"
-			} else {
-				cells[i] = strconv.Itoa(c)
-			}
-		}
-		fmt.Fprintf(&b, "//\t"+arlFormat+"\n", r.rules, r.baseline, cells[0], cells[1], cells[2])
-	}
-	return b.String()
-}
-
-const docPath = "doc.go"
-
-// readARLTable returns the table block from doc.go verbatim, from the header
-// line to the last row.
-func readARLTable() (string, error) {
-	lines, start, end, err := findARLTable()
-	if err != nil {
-		return "", err
-	}
-	return strings.Join(lines[start:end], "\n") + "\n", nil
-}
-
-func replaceARLTable(rendered string) error {
-	lines, start, end, err := findARLTable()
-	if err != nil {
-		return err
-	}
-	out := append([]string{}, lines[:start]...)
-	out = append(out, strings.Split(strings.TrimRight(rendered, "\n"), "\n")...)
-	out = append(out, lines[end:]...)
-	return os.WriteFile(docPath, []byte(strings.Join(out, "\n")+"\n"), 0o644)
-}
-
-func findARLTable() (lines []string, start, end int, err error) {
-	f, err := os.Open(docPath)
-	if err != nil {
-		return nil, 0, 0, err
-	}
-	defer f.Close()
-	sc := bufio.NewScanner(f)
-	for sc.Scan() {
-		lines = append(lines, sc.Text())
-	}
-	if err := sc.Err(); err != nil {
-		return nil, 0, 0, err
-	}
-	start = -1
-	for i, l := range lines {
-		if l == "//\t"+arlHeader {
-			start = i
-			break
-		}
-	}
-	if start < 0 {
-		return nil, 0, 0, fmt.Errorf("no table header %q in %s", arlHeader, docPath)
-	}
-	end = start + 1
-	for end < len(lines) && strings.HasPrefix(lines[end], "//\t") {
-		end++
-	}
-	return lines, start, end, nil
 }
