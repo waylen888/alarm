@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"fmt"
 	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 )
@@ -14,12 +13,13 @@ import (
 // doc.go is the golden file: there is no second copy here to drift away from
 // it, and TestFalseAlarmRates rewrites it under -update.
 //
-// Rewriting a hand-written source file from a test is the pattern
-// math/rand/v2's regress_test.go uses on its own golden data. What follows
-// adds the guards that pattern needs and the standard library's version also
-// wants: a block bounded by a row count rather than by a prefix scan, a
-// parser that is the exact inverse of the renderer, a round trip before any
-// write, and an atomic replacement.
+// It is read-only. An earlier version rewrote doc.go in place under an
+// -update flag, and every defect the last two reviews found in this package
+// was downstream of that writer: it wrote a row of zeros when a measurement
+// failed, it deleted an ordinary comment written under the table, and the
+// test that claimed to guard its atomicity passed when the atomicity was
+// taken out. A table that moves twice a year does not need a writer — the
+// measurement prints the new block and a person pastes it.
 
 // arlRow is one line of the table. A column of -1 renders as "never".
 //
@@ -232,57 +232,4 @@ func readARLTable(wantRows int) (string, []arlRow, error) {
 		return "", nil, err
 	}
 	return strings.Join(lines[start:end], "\n") + "\n", rows, nil
-}
-
-// replaceARLTable swaps the block for rendered, atomically. os.WriteFile
-// truncates in place, so an interrupted -update left doc.go short of its
-// closing text and the package unbuildable. A rename over the original is the
-// one step a signal cannot land in the middle of.
-//
-// The temporary file goes in doc.go's own directory, because a rename is only
-// atomic within a filesystem and the system temporary directory is often not
-// this one. CreateTemp opens at 0600, so the original's mode is copied across
-// explicitly.
-func replaceARLTable(rendered string, wantRows int) (err error) {
-	lines, start, end, _, err := findARLTable(wantRows)
-	if err != nil {
-		return err
-	}
-	info, err := os.Stat(docPath)
-	if err != nil {
-		return err
-	}
-
-	out := append([]string{}, lines[:start]...)
-	out = append(out, strings.Split(strings.TrimRight(rendered, "\n"), "\n")...)
-	out = append(out, lines[end:]...)
-
-	tmp, err := os.CreateTemp(filepath.Dir(docPath), "."+filepath.Base(docPath)+".tmp-*")
-	if err != nil {
-		return err
-	}
-	name := tmp.Name()
-	// Every path out of here that is not the successful rename must take the
-	// temporary file with it, or a failed -update leaves the package
-	// directory holding a file the go tool will try to build.
-	defer func() {
-		tmp.Close()
-		if err != nil {
-			os.Remove(name)
-		}
-	}()
-
-	if _, err = tmp.WriteString(strings.Join(out, "\n") + "\n"); err != nil {
-		return err
-	}
-	if err = tmp.Chmod(info.Mode().Perm()); err != nil {
-		return err
-	}
-	// Closed before the rename, so a short write or a full disk is reported
-	// here rather than lost, and the rename only ever publishes a whole file.
-	if err = tmp.Close(); err != nil {
-		return err
-	}
-	err = os.Rename(name, docPath)
-	return err
 }

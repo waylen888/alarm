@@ -60,9 +60,9 @@ var allRules = []Rule{Rule1, Rule2, Rule3, Rule4, Rule5, Rule6, Rule7, Rule8}
 // a copy and may be modified.
 //
 // It is the rule set Check applies when the caller names none, and it is what
-// to pass Nelson to get the same. Over a Trailing(50) baseline it false
-// alarms once every 47 observations against 215 for DefaultRules; see the
-// package documentation before handing it to anything that pages.
+// to pass Nelson to get the same. It is also several times noisier than any
+// smaller set; see the measured table in the package documentation before
+// handing it to anything that pages.
 func AllRules() []Rule { return append([]Rule(nil), allRules...) }
 
 // DefaultRules returns the rule set a condition falls back to when it is given

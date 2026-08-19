@@ -14,9 +14,8 @@ import (
 // against on any single evaluation.
 //
 // The rule is shaped the way a paging rule has to be. The rules are a required
-// argument and there is no set quiet enough to be a safe default: over a
-// Trailing(50) baseline all eight false-alarm once every 47 observations and
-// rule 1 alone once every 215. ClearFor is set longer
+// argument and there is no set quiet enough to be a safe default; the package
+// documentation has the measured false-alarm rates. ClearFor is set longer
 // than an incident is expected to last, because a trailing baseline follows
 // a sustained shift into the reference period and the condition goes quiet
 // again after about ref observations whether or not anything was fixed.

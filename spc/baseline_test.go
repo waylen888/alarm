@@ -1,8 +1,14 @@
 package spc
 
 import (
+	"fmt"
 	"math"
+	"os"
+	"regexp"
+	"strconv"
+	"strings"
 	"testing"
+	"unicode"
 )
 
 // quoted pins the sigma distances the package documentation and both READMEs
@@ -10,21 +16,34 @@ import (
 // only check which side of three each lands on, so without this the quoted
 // figures could drift silently — which is the failure the documentation's own
 // reproducibility rule exists to prevent.
-func quoted(t *testing.T, what string, plain, robust, local, wantPlain, wantRobust, wantLocal float64) {
+// documentedZ holds the sigma distances the package documentation and both
+// READMEs print, in the order they print them: Trailing, TrailingRobust,
+// TrailingRange. One source of truth — quoted pins these to the measurement
+// and TestDocumentedFigures pins them to the prose.
+var documentedZ = map[string][3]float64{
+	"drift in the reference": {2.2, 1.8, 19.2},
+	"one outlier":            {0.6, 4.0, 1.3},
+}
+
+func quoted(t *testing.T, what string, plain, robust, local float64) {
 	t.Helper()
-	for _, c := range []struct {
-		name      string
-		got, want float64
+	want, ok := documentedZ[what]
+	if !ok {
+		t.Fatalf("no documented sigma distances for %q", what)
+	}
+	for i, c := range []struct {
+		name string
+		got  float64
 	}{
-		{"Trailing", plain, wantPlain},
-		{"TrailingRobust", robust, wantRobust},
-		{"TrailingRange", local, wantLocal},
+		{"Trailing", plain},
+		{"TrailingRobust", robust},
+		{"TrailingRange", local},
 	} {
 		// The documentation quotes one decimal, so compare at one decimal
 		// rather than with a tolerance — 4.05 against a documented 4.1 is
 		// correct and a tolerance of 0.05 rejects it by a rounding error.
-		if math.Round(c.got*10)/10 != c.want {
-			t.Errorf("%s, %s: z = %.2f, documented as %.1f", what, c.name, c.got, c.want)
+		if math.Round(c.got*10)/10 != want[i] {
+			t.Errorf("%s, %s: z = %.2f, documented as %.1f", what, c.name, c.got, want[i])
 		}
 	}
 }
@@ -190,7 +209,7 @@ func TestTrailingRangeSeesThroughDriftInTheReference(t *testing.T) {
 	}
 	t.Logf("drift in the reference: Trailing z = %.2f, TrailingRobust z = %.2f, TrailingRange z = %.2f",
 		plain, robust, local)
-	quoted(t, "drift in the reference", plain, robust, local, 2.2, 1.8, 19.2)
+	quoted(t, "drift in the reference", plain, robust, local)
 }
 
 // The honest ordering on the other failure mode. A single outlier contributes
@@ -216,7 +235,7 @@ func TestTrailingRangeIsOnlyPartlyResistantToAnOutlier(t *testing.T) {
 	// TrailingRobust, TrailingRange — so that anyone updating the prose from
 	// this line cannot transpose the last two, which has happened once.
 	t.Logf("one outlier: Trailing z = %.2f, TrailingRobust z = %.2f, TrailingRange z = %.2f", plain, robust, local)
-	quoted(t, "one outlier", plain, robust, local, 0.6, 4.0, 1.3)
+	quoted(t, "one outlier", plain, robust, local)
 }
 
 // A low-cardinality integer metric has a MAD of zero as soon as more than half
@@ -326,4 +345,73 @@ func TestRobustBaselineSurvivesAnOutlierInTheReference(t *testing.T) {
 		t.Errorf("TrailingRobust z = %v; want > 3", robust)
 	}
 	t.Logf("one outlier in the reference: Trailing z = %.2f, TrailingRobust z = %.2f", plain, robust)
+}
+
+// The sigma distances quoted just above are repeated in three documents, and
+// nothing used to hold those copies to the measurement. The comment on the
+// log line in TestTrailingRangeIsOnlyPartlyResistantToAnOutlier records that
+// they were transposed once already.
+//
+// The patterns are phrases rather than bare numbers: a lone "1.3" would match
+// half a dozen unrelated things, and the order the three estimators appear in
+// is exactly what went wrong before.
+func TestDocumentedSigmaDistances(t *testing.T) {
+	d := func(v float64) string { return strconv.FormatFloat(v, 'f', 1, 64) }
+	z1, z2 := documentedZ["drift in the reference"], documentedZ["one outlier"]
+
+	for _, c := range []struct{ file, why, pattern string }{
+		{"doc.go", "under drift",
+			fmt.Sprintf(`reads %s sigma to Trailing, %s to TrailingRobust and %s to TrailingRange`, d(z1[0]), d(z1[1]), d(z1[2]))},
+		{"doc.go", "under an outlier",
+			fmt.Sprintf(`the same three read %s, %s and %s\.`, d(z2[0]), d(z2[1]), d(z2[2]))},
+		{"../README.md", "under drift",
+			fmt.Sprintf("reads %sσ to `Trailing`, %sσ to `TrailingRobust` and %sσ to `TrailingRange`", d(z1[0]), d(z1[1]), d(z1[2]))},
+		{"../README.md", "under an outlier",
+			fmt.Sprintf(`the same three read %sσ, %sσ and %sσ\.`, d(z2[0]), d(z2[1]), d(z2[2]))},
+		{"../README.zh-TW.md", "under drift",
+			fmt.Sprintf("對 `Trailing` 是 %sσ、對 `TrailingRobust` 是 %sσ、對 `TrailingRange` 是 %sσ", d(z1[0]), d(z1[1]), d(z1[2]))},
+		{"../README.zh-TW.md", "under an outlier",
+			fmt.Sprintf(`三者則是%sσ、%sσ、%sσ。`, d(z2[0]), d(z2[1]), d(z2[2]))},
+	} {
+		b, err := os.ReadFile(c.file)
+		if err != nil {
+			t.Fatalf("%s: %v", c.file, err)
+		}
+		if !regexp.MustCompile(c.pattern).MatchString(flattenDoc(b)) {
+			t.Errorf("%s: the baseline comparison %s no longer reads as the measurement says it should.\n"+
+				"want a sentence matching:\n\t%s", c.file, c.why, c.pattern)
+		}
+	}
+}
+
+// flattenDoc joins wrapped lines so a pattern can be written the way the
+// sentence reads. A space is inserted only when the characters on either side
+// of the break are both ASCII: Traditional Chinese wraps without one.
+func flattenDoc(b []byte) string {
+	var out []rune
+	for _, line := range strings.Split(string(b), "\n") {
+		line = strings.TrimSpace(line)
+		line = strings.TrimPrefix(line, "//")
+		line = strings.TrimPrefix(line, "- ")
+		line = strings.Join(strings.Fields(line), " ")
+		if line == "" {
+			continue
+		}
+		r := []rune(line)
+		if len(out) > 0 && !isCJK(out[len(out)-1]) && !isCJK(r[0]) {
+			out = append(out, ' ')
+		}
+		out = append(out, r...)
+	}
+	return string(out)
+}
+
+// isCJK reports whether r is a character that wraps without a space. The test
+// is not "not ASCII": the documentation writes sigma distances as "2.2σ", and
+// σ is Greek, so a not-ASCII rule joined "1.8σ" to the next line with no space
+// and every pattern stopped matching.
+func isCJK(r rune) bool {
+	return unicode.In(r, unicode.Han, unicode.Hiragana, unicode.Katakana, unicode.Hangul) ||
+		(r >= 0x3000 && r <= 0x303F) || // CJK symbols and punctuation
+		(r >= 0xFF00 && r <= 0xFFEF) // fullwidth forms
 }

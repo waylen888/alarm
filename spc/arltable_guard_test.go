@@ -3,8 +3,6 @@ package spc_test
 import (
 	"os"
 	"path/filepath"
-	"regexp"
-	"strconv"
 	"strings"
 	"testing"
 )
@@ -90,24 +88,6 @@ func TestARLTableRejectsAMisplacedRow(t *testing.T) {
 	}
 }
 
-// The over-run that deleted an ordinary comment written under the table.
-func TestARLTableLeavesAnAdjacentCommentAlone(t *testing.T) {
-	const neighbour = "//\tSee also the EWMA section.\n"
-	rendered := renderARLTable(guardRows)
-	withDocCopy(t, docWith(rendered+neighbour))
-
-	if err := replaceARLTable(rendered, len(guardRows)); err != nil {
-		t.Fatalf("replacing: %v", err)
-	}
-	after, err := os.ReadFile(docPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(string(after), neighbour) {
-		t.Errorf("the comment below the table was deleted:\n%s", after)
-	}
-}
-
 // A thirteenth row sits outside a twelve-row block, would be compared against
 // nothing, and would survive -update unchanged and wrong.
 func TestARLTableRejectsAnExtraRow(t *testing.T) {
@@ -130,87 +110,5 @@ func TestARLTableRejectsATruncatedBlock(t *testing.T) {
 	withDocCopy(t, docWith(renderARLTable(guardRows[:1])))
 	if _, _, err := readARLTable(len(guardRows)); err == nil {
 		t.Error("a block with too few rows must be an error")
-	}
-}
-
-// The write must be atomic and must keep the file's mode: an interrupted
-// -update used to leave doc.go truncated and unbuildable.
-func TestARLTableWritePreservesMode(t *testing.T) {
-	rendered := renderARLTable(guardRows)
-	withDocCopy(t, docWith(rendered))
-	if err := os.Chmod(docPath, 0o664); err != nil {
-		t.Fatal(err)
-	}
-	if err := replaceARLTable(rendered, len(guardRows)); err != nil {
-		t.Fatalf("replacing: %v", err)
-	}
-	info, err := os.Stat(docPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got := info.Mode().Perm(); got != 0o664 {
-		t.Errorf("mode is %v after the rewrite, want 0664", got)
-	}
-	// No temporary file left behind for the go tool to try to build.
-	entries, err := os.ReadDir(filepath.Dir(docPath))
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, e := range entries {
-		if strings.HasPrefix(e.Name(), ".doc.go.tmp-") {
-			t.Errorf("a temporary file survived the rewrite: %s", e.Name())
-		}
-	}
-}
-
-// The figures the prose quotes outside the table are duplicated across six
-// files and two languages, and the golden table guards none of them. This
-// does: if a measurement moves, every place that repeats it has to move too.
-//
-// It is deliberately read-only and deliberately loose — it asserts the number
-// is present, not where or why — because the failure it exists to catch is a
-// figure that was updated in one file and forgotten in the others.
-func TestQuotedFiguresAppearWhereTheyAreQuoted(t *testing.T) {
-	if testing.Short() {
-		t.Skip("reads the measurement out of doc.go, which the long test maintains")
-	}
-	_, rows, err := readARLTable(len(arlConfigs()))
-	if err != nil {
-		t.Fatalf("reading the table out of doc.go: %v", err)
-	}
-	cell := func(rules, baseline string) int {
-		for _, r := range rows {
-			if r.rules == rules && r.baseline == baseline {
-				return r.cols[0]
-			}
-		}
-		t.Fatalf("no row for %s / %s", rules, baseline)
-		return 0
-	}
-
-	quoted := []struct {
-		what  string
-		value int
-		files []string
-	}{
-		{"all eight over Trailing(50)", cell("all eight", "Trailing(50)"),
-			[]string{"doc.go", "nelson.go", "conditions.go", "example_test.go", "../README.md", "../README.zh-TW.md"}},
-		{"rule 1 over Trailing(50)", cell("rule 1", "Trailing(50)"),
-			[]string{"doc.go", "nelson.go", "conditions.go", "example_test.go", "../README.md", "../README.zh-TW.md"}},
-		{"rule 1 over Fixed", cell("rule 1", "Fixed"), []string{"doc.go"}},
-		{"all eight over Fixed", cell("all eight", "Fixed"), []string{"doc.go"}},
-	}
-	for _, q := range quoted {
-		re := regexp.MustCompile(`\b` + strconv.Itoa(q.value) + `\b`)
-		for _, f := range q.files {
-			b, err := os.ReadFile(f)
-			if err != nil {
-				t.Fatalf("%s: %v", f, err)
-			}
-			if !re.Match(b) {
-				t.Errorf("%s no longer mentions %d, the measured rate for %s — "+
-					"the figure moved and this file was not updated with it", f, q.value, q.what)
-			}
-		}
 	}
 }

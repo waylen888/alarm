@@ -106,8 +106,8 @@ func (c conditionBase) split(w alarm.Window) (test []float64, centre, sigma floa
 //
 // The rules are a required argument, and deliberately so. This constructor
 // installs something that can wake a person, no rule set is quiet enough to
-// be safe by default — over a Trailing(50) baseline all eight false alarms
-// once every 47 observations and rule 1 alone once every 215 — and which rules a
+// be safe by default — the measured table in the package documentation gives
+// the false-alarm rates, and none of them is safe on its own — and which rules a
 // metric deserves is a judgement about that metric that the package is not in
 // a position to make. Pass AllRules to apply the published procedure. Unknown
 // rules are dropped, and an empty or wholly unknown set falls back to
