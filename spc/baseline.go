@@ -135,18 +135,21 @@ func (b trailing) Estimate(ref []float64) (float64, float64, bool) {
 // median absolute deviation scaled by MADScale. n below 2 is raised to 2.
 //
 // Both estimators have a 50% breakdown point, so up to half the reference
-// period can be arbitrarily corrupted without moving the limits. That is the
+// period can be arbitrarily corrupted without the limits being driven
+// arbitrarily far. They still move, by a bounded amount. That is the
 // difference that matters: a reference period containing a single large
 // outlier gives Trailing a sigma several times too wide, and a shift that
 // should have been three sigma out lands comfortably inside the limits.
 //
 // The price is efficiency. On genuinely clean normal data MAD·MADScale is a
-// noisier estimator of σ than the sample standard deviation, so Trailing
-// detects marginally sooner. Reference periods drawn from production
+// noisier estimator of σ than the sample standard deviation — its asymptotic
+// efficiency at the normal is about 37% — so Trailing detects sooner. Reference periods drawn from production
 // monitoring data are rarely clean.
 //
 // Two cautions. MAD·MADScale is biased low at small n — by roughly 10% at
-// n=10 and 2% at n=50 — and no finite-sample correction is applied here, so a
+// n=10 and 2% at n=50, the finite-sample factors of Croux and Rousseeuw
+// (Computational Statistics & Data Analysis 14(1), 1992) — and no correction
+// is applied here, so a
 // small n gives limits that are slightly too tight and a false-alarm rate
 // slightly above nominal. Prefer n of 50 or more. And MAD is zero whenever
 // more than half the reference observations share a value, which for a

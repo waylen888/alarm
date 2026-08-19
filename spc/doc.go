@@ -81,7 +81,7 @@
 // on a reference period whose level climbs while its scatter does not, a shift
 // four units past where the reference ended reads 2.2 sigma to Trailing, 1.8
 // to TrailingRobust and 19.2 to TrailingRange; with one large outlier in an
-// otherwise steady reference instead, the same three read 0.6, 4.1 and 1.3.
+// otherwise steady reference instead, the same three read 0.6, 4.0 and 1.3.
 //
 // The observations under test are never part of their own baseline. A
 // sustained shift allowed into its own centre line drags the centre after it

@@ -17,8 +17,9 @@ import (
 const (
 	// DefaultLambda is the smoothing factor used when the caller's lambda is
 	// not a finite number above zero. A lambda above 1 is clamped to 1
-	// instead, since that is a value in range. 0.2 is the conventional choice
-	// for detecting shifts of roughly one sigma.
+	// instead, since that is a value in range. 0.2 with an L of 3 is the
+	// conventional pairing for detecting shifts of roughly one sigma; the
+	// design tables are Lucas and Saccucci, Technometrics 32(1), 1990.
 	DefaultLambda = 0.2
 	// DefaultL is the control limit width used when the caller's L is not a
 	// finite positive number. 3 mirrors the three-sigma limits of a Shewhart
@@ -105,8 +106,8 @@ func (c conditionBase) split(w alarm.Window) (test []float64, centre, sigma floa
 //
 // The rules are a required argument, and deliberately so. This constructor
 // installs something that can wake a person, no rule set is quiet enough to
-// be safe by default — all eight false alarms once every 47 observations on
-// an in-control process and rule 1 alone once every 215 — and which rules a
+// be safe by default — over a Trailing(50) baseline all eight false alarms
+// once every 47 observations and rule 1 alone once every 215 — and which rules a
 // metric deserves is a judgement about that metric that the package is not in
 // a position to make. Pass AllRules to apply the published procedure. Unknown
 // rules are dropped, and an empty or wholly unknown set falls back to

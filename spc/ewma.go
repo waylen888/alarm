@@ -32,9 +32,11 @@ const EWMAResidualWeight = 0.01
 // indistinguishable from a perfectly ordinary EWMA.
 //
 // Seeding at series[0] rather than at the centre line keeps the function
-// independent of any baseline, which is what lets it live in this layer. Over
-// a series of at least EWMAMinPoints observations the choice of seed carries
-// less than EWMAResidualWeight of the result.
+// independent of any baseline, which is what lets it live in this layer. The
+// seed is the oldest retained observation and carries (1-λ)^{n-1} of the
+// result, which at λ=0.2 and n=21 is 1.15% — above EWMAResidualWeight, which
+// bounds something else: the weight of the history a bounded window discards.
+// See EWMAResidualWeight.
 func EWMAStat(series []float64, lambda float64) (float64, bool) {
 	if len(series) == 0 || !finite(lambda) || lambda <= 0 || lambda > 1 {
 		return 0, false

@@ -5,6 +5,30 @@ import (
 	"testing"
 )
 
+// quoted pins the sigma distances the package documentation and both READMEs
+// print for this fixture, in the order they are printed. The assertions above
+// only check which side of three each lands on, so without this the quoted
+// figures could drift silently — which is the failure the documentation's own
+// reproducibility rule exists to prevent.
+func quoted(t *testing.T, what string, plain, robust, local, wantPlain, wantRobust, wantLocal float64) {
+	t.Helper()
+	for _, c := range []struct {
+		name      string
+		got, want float64
+	}{
+		{"Trailing", plain, wantPlain},
+		{"TrailingRobust", robust, wantRobust},
+		{"TrailingRange", local, wantLocal},
+	} {
+		// The documentation quotes one decimal, so compare at one decimal
+		// rather than with a tolerance — 4.05 against a documented 4.1 is
+		// correct and a tolerance of 0.05 rejects it by a rounding error.
+		if math.Round(c.got*10)/10 != c.want {
+			t.Errorf("%s, %s: z = %.2f, documented as %.1f", what, c.name, c.got, c.want)
+		}
+	}
+}
+
 // steady returns n observations of a process centred on 100 with a fixed,
 // deterministic jitter of at most ±0.9. Its sample standard deviation is
 // ≈0.54 and its MAD·MADScale ≈0.67, close enough that the two baselines agree
@@ -166,6 +190,7 @@ func TestTrailingRangeSeesThroughDriftInTheReference(t *testing.T) {
 	}
 	t.Logf("drift in the reference: Trailing z = %.2f, TrailingRobust z = %.2f, TrailingRange z = %.2f",
 		plain, robust, local)
+	quoted(t, "drift in the reference", plain, robust, local, 2.2, 1.8, 19.2)
 }
 
 // The honest ordering on the other failure mode. A single outlier contributes
@@ -187,7 +212,11 @@ func TestTrailingRangeIsOnlyPartlyResistantToAnOutlier(t *testing.T) {
 	if local > 3 {
 		t.Errorf("TrailingRange z = %v; a single large outlier still masks the shift for it", local)
 	}
-	t.Logf("one outlier: Trailing z = %.2f, TrailingRange z = %.2f, TrailingRobust z = %.2f", plain, local, robust)
+	// Logged in the order the documentation quotes them — Trailing,
+	// TrailingRobust, TrailingRange — so that anyone updating the prose from
+	// this line cannot transpose the last two, which has happened once.
+	t.Logf("one outlier: Trailing z = %.2f, TrailingRobust z = %.2f, TrailingRange z = %.2f", plain, robust, local)
+	quoted(t, "one outlier", plain, robust, local, 0.6, 4.0, 1.3)
 }
 
 // A low-cardinality integer metric has a MAD of zero as soon as more than half

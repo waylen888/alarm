@@ -349,7 +349,7 @@ and hides the shift that follows; a moving range is local and cannot see the lev
 outlier contributes two large ranges to it. On a reference period whose level climbs while
 its scatter does not, a shift four units past where it ended reads 2.2σ to `Trailing`, 1.8σ
 to `TrailingRobust` and 19.2σ to `TrailingRange`; with one large outlier in a steady
-reference instead, the same three read 0.6σ, 4.1σ and 1.3σ. Pick by which the metric has.
+reference instead, the same three read 0.6σ, 4.0σ and 1.3σ. Pick by which the metric has.
 
 Worth knowing before reaching for it:
 

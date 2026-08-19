@@ -94,9 +94,10 @@ func Median(xs []float64) (float64, bool) {
 // empty slice, a non-finite result, or a zero deviation.
 //
 // MAD has a breakdown point of 50%: up to half the observations can be
-// arbitrarily corrupted without moving it. A standard deviation has a
-// breakdown point of zero — one outlier moves it as far as you like — which
-// is why a reference period containing spikes needs this instead.
+// arbitrarily corrupted without driving it arbitrarily far. It still moves,
+// by a bounded amount. A standard deviation has a breakdown point of zero —
+// one outlier moves it as far as you like — which is why a reference period
+// containing spikes needs this instead.
 func MAD(xs []float64) (float64, bool) {
 	med, ok := Median(xs)
 	if !ok {
@@ -123,7 +124,9 @@ func MAD(xs []float64) (float64, bool) {
 // A sample standard deviation over a reference period containing a drift, a
 // ramp or part of a cycle absorbs that level variation as though it were
 // scatter, and returns a sigma several times larger than the noise the
-// process actually has. A mean moving range does not see it.
+// process actually has. A mean moving range does not see the level, so a
+// ramp enters it only as the per-step increment rather than as the whole
+// excursion.
 //
 // The price is the mirror image: a mean moving range cannot tell a genuinely
 // noisy process from a smoothly drifting one, and on an autocorrelated series
