@@ -15,13 +15,13 @@ import (
 // remaining hints are optional interfaces the engine type-asserts at runtime,
 // so they are checked the same way the engine checks them.
 var (
-	_ alarm.Condition = spc.Nelson(spc.Fixed(0, 1), 2)
+	_ alarm.Condition = spc.Nelson(spc.Fixed(0, 1), 2, spc.DefaultRules())
 	_ alarm.Condition = spc.EWMA(spc.Fixed(0, 1), 2, 0.2, 3)
 )
 
 func TestConditionsImplementTheRightHints(t *testing.T) {
 	for name, c := range map[string]alarm.Condition{
-		"Nelson": spc.Nelson(spc.Trailing(30), 30, spc.Rule1),
+		"Nelson": spc.Nelson(spc.Trailing(30), 30, []spc.Rule{spc.Rule1}),
 		"EWMA":   spc.EWMA(spc.Trailing(30), 30, 0.2, 3),
 	} {
 		if _, ok := c.(alarm.PointsHinter); !ok {
@@ -53,13 +53,13 @@ func TestNelsonMinPoints(t *testing.T) {
 		c    alarm.Condition
 		want int
 	}{
-		{"rule 7 over Trailing(50): 15 + 50", spc.Nelson(spc.Trailing(50), 50, spc.Rule7), 65},
-		{"rule 1 over Trailing(50): 1 + 50", spc.Nelson(spc.Trailing(50), 50, spc.Rule1), 51},
-		{"rules 1 and 2: the larger wins", spc.Nelson(spc.Trailing(20), 20, spc.Rule1, spc.Rule2), 29},
-		{"all eight: rule 7 is the largest", spc.Nelson(spc.Trailing(20), 20), 35},
-		{"Fixed asks for nothing, but ref still stands", spc.Nelson(spc.Fixed(0, 1), 10, spc.Rule2), 19},
-		{"a baseline needing more than ref wins", spc.Nelson(spc.Trailing(50), 10, spc.Rule7), 65},
-		{"Fixed reads no reference, so rule 1 alone needs one point", spc.Nelson(spc.Fixed(0, 1), 0, spc.Rule1), 1},
+		{"rule 7 over Trailing(50): 15 + 50", spc.Nelson(spc.Trailing(50), 50, []spc.Rule{spc.Rule7}), 65},
+		{"rule 1 over Trailing(50): 1 + 50", spc.Nelson(spc.Trailing(50), 50, []spc.Rule{spc.Rule1}), 51},
+		{"rules 1 and 2: the larger wins", spc.Nelson(spc.Trailing(20), 20, []spc.Rule{spc.Rule1, spc.Rule2}), 29},
+		{"AllRules: rule 7 is the largest", spc.Nelson(spc.Trailing(20), 20, spc.AllRules()), 35},
+		{"Fixed asks for nothing, but ref still stands", spc.Nelson(spc.Fixed(0, 1), 10, []spc.Rule{spc.Rule2}), 19},
+		{"a baseline needing more than ref wins", spc.Nelson(spc.Trailing(50), 10, []spc.Rule{spc.Rule7}), 65},
+		{"Fixed reads no reference, so rule 1 alone needs one point", spc.Nelson(spc.Fixed(0, 1), 0, []spc.Rule{spc.Rule1}), 1},
 	}
 	for _, c := range cases {
 		if got := minPoints(t, c.c); got != c.want {
@@ -72,10 +72,10 @@ func TestNelsonMinPoints(t *testing.T) {
 // the MinRefPoints floor: there is no way to tell whether it can work with
 // fewer, and a condition that is never true is the worse guess.
 func TestAnUndeclaredBaselineGetsTheReferenceFloor(t *testing.T) {
-	if got, want := minPoints(t, spc.Nelson(undeclared{}, 0, spc.Rule1)), 3; got != want {
+	if got, want := minPoints(t, spc.Nelson(undeclared{}, 0, []spc.Rule{spc.Rule1})), 3; got != want {
 		t.Errorf("MinPoints = %d, want %d", got, want)
 	}
-	if got, want := minPoints(t, spc.Nelson(undeclared{}, 30, spc.Rule1)), 31; got != want {
+	if got, want := minPoints(t, spc.Nelson(undeclared{}, 30, []spc.Rule{spc.Rule1})), 31; got != want {
 		t.Errorf("MinPoints = %d, want %d", got, want)
 	}
 }
@@ -103,8 +103,8 @@ func TestMinPointsStaysInsideTheWindowCap(t *testing.T) {
 	cases := map[string]alarm.Condition{
 		"a tiny lambda":        spc.EWMA(spc.Fixed(0, 1), 2, 1e-9, 3),
 		"a NaN lambda":         spc.EWMA(spc.Fixed(0, 1), 2, math.NaN(), 3),
-		"an enormous ref":      spc.Nelson(spc.Fixed(0, 1), 1<<20, spc.Rule7),
-		"an enormous baseline": spc.Nelson(spc.Trailing(1<<20), 2, spc.Rule7),
+		"an enormous ref":      spc.Nelson(spc.Fixed(0, 1), 1<<20, []spc.Rule{spc.Rule7}),
+		"an enormous baseline": spc.Nelson(spc.Trailing(1<<20), 2, []spc.Rule{spc.Rule7}),
 	}
 	for name, c := range cases {
 		if got := minPoints(t, c); got > alarm.MaxWindowPoints {
@@ -149,22 +149,32 @@ func TestConditionsReportTheirEffectiveConfiguration(t *testing.T) {
 	if !strings.Contains(squeezed, "ref=2") {
 		t.Errorf("%q should show the reference squeezed down to 2", squeezed)
 	}
-	if got := fmt.Sprint(spc.Nelson(spc.Fixed(0, 1), 4, spc.Rule2)); !strings.Contains(got, "rule2") {
+	if got := fmt.Sprint(spc.Nelson(spc.Fixed(0, 1), 4, []spc.Rule{spc.Rule2})); !strings.Contains(got, "rule2") {
 		t.Errorf("%q does not name the enabled rules", got)
 	}
 }
 
-func TestNelsonWithOnlyUnknownRulesEnablesAllEight(t *testing.T) {
-	// All eight means rule 7's fifteen points dominate MinPoints.
-	if got, want := minPoints(t, spc.Nelson(spc.Fixed(0, 1), 2, spc.Rule(0), spc.Rule(99))), 17; got != want {
+// Input that is entirely wrong must not select the noisiest condition the
+// package can build. A mistyped rule constant in a configuration file falls
+// back to rule 1, not to all eight.
+func TestNelsonWithOnlyUnknownRulesFallsBackToTheDefault(t *testing.T) {
+	// DefaultRules is rule 1, so one point under test plus two reference.
+	if got, want := minPoints(t, spc.Nelson(spc.Fixed(0, 1), 2, []spc.Rule{spc.Rule(0), spc.Rule(99)})), 3; got != want {
 		t.Errorf("MinPoints = %d, want %d", got, want)
+	}
+	if got, want := minPoints(t, spc.Nelson(spc.Fixed(0, 1), 2, nil)), 3; got != want {
+		t.Errorf("an empty rule set: MinPoints = %d, want %d", got, want)
+	}
+	// All eight is still available, by asking for it.
+	if got, want := minPoints(t, spc.Nelson(spc.Fixed(0, 1), 2, spc.AllRules())), 17; got != want {
+		t.Errorf("AllRules: MinPoints = %d, want %d", got, want)
 	}
 }
 
 // A condition given too few observations must report false rather than
 // judging a partial series.
 func TestConditionsAreFalseUntilTheWindowFills(t *testing.T) {
-	c := spc.Nelson(spc.Fixed(100, 1), 2, spc.Rule1)
+	c := spc.Nelson(spc.Fixed(100, 1), 2, []spc.Rule{spc.Rule1})
 	if c.Breach(seriesWindow(200)) {
 		t.Error("breached with fewer observations than MinPoints")
 	}
@@ -178,7 +188,7 @@ func TestConditionsAreFalseUntilTheWindowFills(t *testing.T) {
 }
 
 func TestNelsonMeasureReportsSigmaDistance(t *testing.T) {
-	c := spc.Nelson(spc.Fixed(100, 2), 2, spc.Rule1).(alarm.Measurer)
+	c := spc.Nelson(spc.Fixed(100, 2), 2, []spc.Rule{spc.Rule1}).(alarm.Measurer)
 	if got := c.Measure(seriesWindow(100, 100, 107)); math.Abs(got-3.5) > 1e-9 {
 		t.Errorf("Measure = %v, want 3.5", got)
 	}
@@ -203,7 +213,7 @@ func TestAnUnusableBaselineNeverBreaches(t *testing.T) {
 	flat[len(flat)-1] = 500
 
 	for name, c := range map[string]alarm.Condition{
-		"Nelson": spc.Nelson(spc.Trailing(20), 20, spc.Rule1),
+		"Nelson": spc.Nelson(spc.Trailing(20), 20, []spc.Rule{spc.Rule1}),
 		"EWMA":   spc.EWMA(spc.Trailing(20), 20, 0.5, 3),
 	} {
 		if c.Breach(seriesWindow(flat...)) {
@@ -215,7 +225,7 @@ func TestAnUnusableBaselineNeverBreaches(t *testing.T) {
 // Only rules completing at the newest observation breach. A spike that has
 // scrolled back into the series is not a live breach.
 func TestNelsonOnlyFiresAtTheNewestObservation(t *testing.T) {
-	c := spc.Nelson(spc.Fixed(100, 1), 2, spc.Rule2)
+	c := spc.Nelson(spc.Fixed(100, 1), 2, []spc.Rule{spc.Rule2})
 	shifted := []float64{100, 100} // reference, unused by Fixed
 	for i := 0; i < 9; i++ {
 		shifted = append(shifted, 101)
@@ -233,7 +243,7 @@ func TestNelsonOnlyFiresAtTheNewestObservation(t *testing.T) {
 // shorter rule needs, so a rule can complete at a position that is no longer
 // the newest observation. Those must not breach.
 func TestNelsonIgnoresRulesThatCompletedEarlierInTheSeries(t *testing.T) {
-	c := spc.Nelson(spc.Fixed(100, 1), 2, spc.Rule1, spc.Rule7)
+	c := spc.Nelson(spc.Fixed(100, 1), 2, []spc.Rule{spc.Rule1, spc.Rule7})
 
 	// Two reference points, then fifteen under test: a four-sigma spike at
 	// the oldest of them and quiet ever since. Rule 1 completed at the spike,
@@ -297,7 +307,7 @@ func TestWindowSizingThroughTheEngine(t *testing.T) {
 			Severity: alarm.SeverityWarn,
 			// Rule 7 needs 15 observations, Trailing(50) needs 50: 65 in all,
 			// well past alarm.DefaultMinPoints of 64.
-			Condition: spc.Nelson(spc.Trailing(50), 50, spc.Rule7),
+			Condition: spc.Nelson(spc.Trailing(50), 50, []spc.Rule{spc.Rule7}),
 		}},
 		StaleAfter:  -1,
 		VanishAfter: -1,
@@ -344,8 +354,8 @@ func TestOneLevelPerRuleIdentifiesWhatFired(t *testing.T) {
 	engine.SetRules([]alarm.Rule{{
 		ID: "spc",
 		Levels: []alarm.Level{
-			{Severity: alarm.SeverityError, Condition: spc.Nelson(spc.Trailing(30), 30, spc.Rule1)},
-			{Severity: alarm.SeverityWarn, Condition: spc.Nelson(spc.Trailing(30), 30, spc.Rule2)},
+			{Severity: alarm.SeverityError, Condition: spc.Nelson(spc.Trailing(30), 30, []spc.Rule{spc.Rule1})},
+			{Severity: alarm.SeverityWarn, Condition: spc.Nelson(spc.Trailing(30), 30, []spc.Rule{spc.Rule2})},
 		},
 		StaleAfter:  -1,
 		VanishAfter: -1,

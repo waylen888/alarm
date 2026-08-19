@@ -34,7 +34,7 @@ func Example() {
 			Severity: alarm.SeverityWarn,
 			// Nine consecutive samples on one side of the centre line: a
 			// sustained shift that never comes close to a three-sigma limit.
-			Condition: spc.Nelson(spc.TrailingRobust(30), 30, spc.Rule2),
+			Condition: spc.Nelson(spc.TrailingRobust(30), 30, []spc.Rule{spc.Rule2}),
 		}},
 		ClearFor:    15 * time.Minute,
 		StaleAfter:  5 * time.Second,

@@ -20,7 +20,7 @@
 //
 // Two conditions are exported, both satisfying alarm.Condition:
 //
-//	spc.Nelson(baseline, ref, rules...)   // the eight Nelson rules
+//	spc.Nelson(baseline, ref, rules)      // the Nelson rules you name
 //	spc.EWMA(baseline, ref, lambda, L)    // exponentially weighted moving average
 //
 // # Layering
@@ -311,8 +311,8 @@
 // alarm.Level rather than bundling them into one condition:
 //
 //	Levels: []alarm.Level{
-//		{Severity: alarm.SeverityError, Condition: spc.Nelson(b, 50, spc.Rule1)},
-//		{Severity: alarm.SeverityWarn,  Condition: spc.Nelson(b, 50, spc.Rule2)},
+//		{Severity: alarm.SeverityError, Condition: spc.Nelson(b, 50, []spc.Rule{spc.Rule1})},
+//		{Severity: alarm.SeverityWarn,  Condition: spc.Nelson(b, 50, []spc.Rule{spc.Rule2})},
 //	}
 //
 // The engine sizes a rule's window from the largest MinPoints among all its

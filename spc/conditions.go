@@ -99,9 +99,17 @@ func (c conditionBase) split(w alarm.Window) (test []float64, centre, sigma floa
 
 // Nelson breaches when one of the named Nelson rules completes at the most
 // recent observation, judged against the limits b estimates from the ref
-// observations preceding the ones under test. Passing no rules enables all
-// eight; unknown rules are dropped, and if that leaves none, all eight are
-// enabled.
+// observations preceding the ones under test.
+//
+// The rules are a required argument, and deliberately so. This constructor
+// installs something that can wake a person, no rule set is quiet enough to
+// be safe by default — all eight false alarms once every 47 observations on
+// an in-control process and rule 1 alone once every 215 — and which rules a
+// metric deserves is a judgement about that metric that the package is not in
+// a position to make. Pass AllRules to apply the published procedure. Unknown
+// rules are dropped, and an empty or wholly unknown set falls back to
+// DefaultRules, because a condition that can never be true is the worse
+// failure.
 //
 // Only rules completing at the newest observation breach. A rule that
 // completed six observations ago has already been reported, and leaving it
@@ -114,10 +122,10 @@ func (c conditionBase) split(w alarm.Window) (test []float64, centre, sigma floa
 // window's length: see the package documentation.
 //
 // MinPoints is the largest Points() among the enabled rules plus the
-// reference size, so a Nelson(Trailing(50), 50, Rule7) condition declares 65.
+// reference size, so a Nelson(Trailing(50), 50, []Rule{Rule7}) condition declares 65.
 // Getting that wrong yields a condition that never breaches, so the two are
 // added here rather than left to the caller.
-func Nelson(b Baseline, ref int, rules ...Rule) alarm.Condition {
+func Nelson(b Baseline, ref int, rules []Rule) alarm.Condition {
 	rules = knownRules(rules)
 	test := 0
 	for _, r := range rules {
@@ -165,11 +173,15 @@ func (c nelson) Measure(w alarm.Window) float64 {
 // something else; fmt dispatches on the dynamic type, so it costs nothing to
 // have and shows up in any log line or test failure that prints the rule.
 func (c nelson) String() string {
-	return fmt.Sprintf("spc.Nelson(ref=%d, points=%d, rules=%v)", c.ref, c.test, c.rules)
+	return fmt.Sprintf("spc.Nelson(ref=%d, points=%d, []spc.Rule{rules=%v})", c.ref, c.test, c.rules)
 }
 
 // knownRules drops unknown rule identifiers, removes duplicates and returns
-// all eight when nothing valid is left.
+// DefaultRules when nothing valid is left.
+//
+// The fallback used to be all eight, which meant a mistyped rule constant in
+// a configuration file selected the noisiest condition the package can build.
+// Input that was entirely wrong must never choose the loudest answer.
 func knownRules(rules []Rule) []Rule {
 	var out []Rule
 	for _, r := range rules {
@@ -178,7 +190,7 @@ func knownRules(rules []Rule) []Rule {
 		}
 	}
 	if len(out) == 0 {
-		return allRules
+		return DefaultRules()
 	}
 	return out
 }

@@ -331,8 +331,8 @@ expect.
 Two conditions, both ordinary `alarm.Condition` values:
 
 ```go
-spc.Nelson(spc.TrailingRobust(30), 30, spc.Rule2) // nine samples on one side of the centre
-spc.EWMA(spc.Trailing(50), 50, 0.2, 3)            // a small sustained shift
+spc.Nelson(spc.TrailingRange(50), 50, []spc.Rule{spc.Rule1}) // one point beyond three sigma
+spc.EWMA(spc.Trailing(50), 50, 0.2, 3)                       // a small sustained shift
 ```
 
 The eight [Nelson rules](https://en.wikipedia.org/wiki/Nelson_rules) (Nelson, 1984) cover
@@ -359,14 +359,15 @@ Worth knowing before reaching for it:
   in the middle of the incident, carrying a near-zero sigma distance as its evidence. Set
   `ClearFor` to at least as long as you expect an incident to last, and do not template a
   recovery message off `Event.Value`. `Fixed` has no such behaviour.
-- **Name the rules you want, one per `Level`.** Naming none enables all eight, which
-  false-alarms once every 47 observations on an in-control process against 215 for rule 1
-  alone, and rule 7 is a baseline-maintenance signal that does not belong in a paging rule.
-  No rule set makes this safe for a pager by itself — see the measured table in the package
-  documentation. Give each rule its
-  own `alarm.Level`: `Event` carries a single float, so bundling several rules into one
-  condition loses which of them fired, while levels share one window and let `Severity`
-  say so.
+- **The rules are a required argument.** There is no default, because no rule set is quiet
+  enough to be safe as one and which rules a metric deserves is a judgement about that
+  metric. `spc.AllRules()` gives the published procedure and false-alarms once every 47
+  observations on an in-control process, against 215 for rule 1 alone; rule 7 is a
+  baseline-maintenance signal that does not belong in a paging rule at all. No rule set
+  makes this safe for a pager by itself — see the measured table in the package
+  documentation. Give each rule its own `alarm.Level`: `Event` carries a single float, so
+  bundling several rules into one condition loses which of them fired, while levels share
+  one window and let `Severity` say so.
 - **The observations under test are never part of their own baseline.** The `Baseline`
   interface only ever receives the reference observations, so the exclusion is structural
   on any single evaluation.

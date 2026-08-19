@@ -58,7 +58,22 @@ var allRules = []Rule{Rule1, Rule2, Rule3, Rule4, Rule5, Rule6, Rule7, Rule8}
 
 // AllRules returns all eight rules in ascending order. The returned slice is
 // a copy and may be modified.
+//
+// It is the rule set Check applies when the caller names none, and it is what
+// to pass Nelson to get the same. Measured on an in-control process it false
+// alarms once every 47 observations against 215 for DefaultRules; see the
+// package documentation before handing it to anything that pages.
 func AllRules() []Rule { return append([]Rule(nil), allRules...) }
+
+// DefaultRules returns the rule set a condition falls back to when it is given
+// no rule it recognises: rule 1 alone.
+//
+// Rule 1 is the quietest of the eight and the one a reader who has not opened
+// the documentation already expects a control chart to apply — a three-sigma
+// excursion. It is a substitution for unusable input, not a recommendation:
+// the rules a metric deserves are a judgement about that metric, which is why
+// Nelson requires them rather than defaulting.
+func DefaultRules() []Rule { return []Rule{Rule1} }
 
 // Points returns how many consecutive observations the rule needs before it
 // can fire. It returns 0 for an unknown rule.
@@ -108,7 +123,15 @@ type Violation struct {
 
 // Check applies the named rules to series against the given centre line and
 // sigma, and returns every violation found. Passing no rules applies all
-// eight; unknown rules are ignored.
+// eight, which is the Nelson procedure as published.
+//
+// Unknown rules are ignored, and a rule set consisting only of unknown rules
+// therefore matches nothing and yields no violations. That is not the same as
+// naming no rules: an absent filter selects everything and a filter that
+// matches nothing selects nothing. The condition constructors cannot take the
+// second branch — a condition that is never true is worse than a noisy one —
+// so Nelson substitutes DefaultRules instead. Check has no such constraint,
+// because an empty result from an analysis costs a reader nothing.
 //
 // A rule is evaluated at every position it can complete at, so a nine-point
 // run reports a violation at the ninth point and again at the tenth if the
