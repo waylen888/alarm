@@ -157,6 +157,24 @@ func TestConditionsReportTheirEffectiveConfiguration(t *testing.T) {
 // Input that is entirely wrong must not select the noisiest condition the
 // package can build. A mistyped rule constant in a configuration file falls
 // back to rule 1, not to all eight.
+// String's only job is its format, so it is the one place a golden string is
+// the right instrument: nothing weaker distinguishes the intended output from
+// a mangled one, which is how a corrupted format literal shipped. The
+// fragment assertions above cover the clamping semantics; this covers the
+// rendering, and duplicate rules being dropped while order is preserved.
+func TestConditionStringsRenderExactly(t *testing.T) {
+	for _, c := range []struct{ got, want string }{
+		{fmt.Sprint(spc.Nelson(spc.Trailing(50), 10, []spc.Rule{spc.Rule2, spc.Rule2, spc.Rule1})),
+			"spc.Nelson(ref=50, points=9, rules=[rule2 rule1])"},
+		{fmt.Sprint(spc.EWMA(spc.Trailing(50), 10, 0.2, -1)),
+			"spc.EWMA(ref=50, points=21, lambda=0.2, L=3)"},
+	} {
+		if c.got != c.want {
+			t.Errorf("String() = %q, want %q", c.got, c.want)
+		}
+	}
+}
+
 func TestNelsonWithOnlyUnknownRulesFallsBackToTheDefault(t *testing.T) {
 	// DefaultRules is rule 1, so one point under test plus two reference.
 	if got, want := minPoints(t, spc.Nelson(spc.Fixed(0, 1), 2, []spc.Rule{spc.Rule(0), spc.Rule(99)})), 3; got != want {
@@ -195,11 +213,16 @@ func TestNelsonMeasureReportsSigmaDistance(t *testing.T) {
 }
 
 func TestEWMAMeasureReportsTheStatistic(t *testing.T) {
-	// lambda 1 makes the statistic the last observation, which is the one
-	// value that can be asserted without restating the recursion.
-	c := spc.EWMA(spc.Fixed(100, 1), 2, 1, 3).(alarm.Measurer)
-	if got := c.Measure(seriesWindow(100, 100, 107)); math.Abs(got-107) > 1e-9 {
-		t.Errorf("Measure = %v, want 107", got)
+	// lambda 0.5 needs EWMAMinPoints(0.5) = 7 observations under test. Seeded
+	// at the first of them, the statistic over 100 x6 then 107 is
+	// 0.5*107 + 0.5*100 = 103.5 — nothing like the last raw observation, which
+	// is the value this method exists not to report. A lambda of 1 would
+	// collapse the two and the assertion would hold against a Measure that
+	// ignored the statistic entirely.
+	c := spc.EWMA(spc.Fixed(100, 1), 2, 0.5, 3).(alarm.Measurer)
+	w := seriesWindow(100, 100, 100, 100, 100, 100, 100, 100, 107)
+	if got := c.Measure(w); math.Abs(got-103.5) > 1e-9 {
+		t.Errorf("Measure = %v, want 103.5 (the statistic, not the last observation)", got)
 	}
 }
 
@@ -286,8 +309,53 @@ func TestEWMADetectsASmallSustainedShift(t *testing.T) {
 			steady = append(steady, 99.5)
 		}
 	}
+	// The same shift downward. An EWMA chart is two-sided, and every other
+	// test here drives the statistic upward, so a one-sided comparison —
+	// dropping the math.Abs in Breach — passes all of them while detecting
+	// half of what the chart exists for.
+	down := []float64{100, 100}
+	for i := 0; i < 21; i++ {
+		down = append(down, 99)
+	}
+	if !c.Breach(seriesWindow(down...)) {
+		t.Error("a sustained one-sigma shift below the centre should leave the EWMA limits")
+	}
+
 	if c.Breach(seriesWindow(steady...)) {
 		t.Error("a process centred on the centre line should not breach")
+	}
+}
+
+// The startup correction must reach the condition, not just the function.
+// At n=21 with lambda 0.2 the corrected half-width is about 4% narrower than
+// the steady-state one, so a shift sized into that gap breaches only if
+// Breach passed len(test) rather than a steady-state n.
+func TestEWMABreachUsesTheStartupCorrectedLimits(t *testing.T) {
+	const lambda, l, sigma = 0.2, 3.0, 1.0
+	n := spc.EWMAMinPoints(lambda)
+	corrected, ok := spc.EWMAControlLimits(sigma, lambda, l, n)
+	if !ok {
+		t.Fatal("EWMAControlLimits reported false")
+	}
+	steady, ok := spc.EWMAControlLimits(sigma, lambda, l, 1<<20)
+	if !ok {
+		t.Fatal("EWMAControlLimits reported false")
+	}
+	if !(corrected < steady) {
+		t.Fatalf("the correction should narrow the limits: %v vs %v", corrected, steady)
+	}
+
+	// A constant offset makes the statistic equal to that offset, so place it
+	// between the two half-widths.
+	offset := (corrected + steady) / 2
+	vals := []float64{100, 100}
+	for i := 0; i < n; i++ {
+		vals = append(vals, 100+offset)
+	}
+	if !spc.EWMA(spc.Fixed(100, sigma), 2, lambda, l).Breach(seriesWindow(vals...)) {
+		t.Errorf("a statistic %v from the centre is outside the corrected limit %v "+
+			"but inside the steady-state limit %v; Breach used the wrong n",
+			offset, corrected, steady)
 	}
 }
 

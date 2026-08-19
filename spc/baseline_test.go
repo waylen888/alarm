@@ -48,14 +48,16 @@ func TestFixed(t *testing.T) {
 }
 
 func TestTrailing(t *testing.T) {
-	// mean 100; deviations -1,0,1,2; sum of squares 6; /3 = 2.
-	ref := []float64{99, 100, 101, 102}
+	// Asymmetric on purpose: mean 105, median 100.5, so a centre estimated
+	// with the wrong statistic is visible here. Deviations from the mean are
+	// -6, -5, -4, 15; sum of squares 302; /3.
+	ref := []float64{99, 100, 101, 120}
 	c, s, ok := Trailing(4).Estimate(ref)
 	if !ok {
 		t.Fatal("Trailing reported false")
 	}
-	close(t, c, 100.5, "centre")
-	close(t, s, math.Sqrt(5.0/3.0), "sigma")
+	close(t, c, 105, "centre")
+	close(t, s, math.Sqrt(302.0/3.0), "sigma")
 
 	if _, _, ok := Trailing(32).Estimate(steady(31)); ok {
 		t.Error("Trailing(32) with 31 observations should report false")
@@ -66,8 +68,10 @@ func TestTrailing(t *testing.T) {
 }
 
 func TestTrailingRobust(t *testing.T) {
-	// median 3; deviations 2,1,0,1,2; median of those 1.
-	ref := []float64{1, 2, 3, 4, 5}
+	// Asymmetric on purpose: median 3, mean 5, so a centre estimated with the
+	// wrong statistic is visible here. Deviations from the median are
+	// 2,1,0,1,9; median of those 1.
+	ref := []float64{1, 2, 3, 4, 13}
 	c, s, ok := TrailingRobust(5).Estimate(ref)
 	if !ok {
 		t.Fatal("TrailingRobust reported false")
@@ -96,6 +100,31 @@ func TestTrailingRange(t *testing.T) {
 	if _, _, ok := TrailingRange(8).Estimate(make([]float64, 8)); ok {
 		t.Error("TrailingRange over a constant series should report false, not sigma 0")
 	}
+}
+
+// TrailingRobust's selling point is a centre line with a 50% breakdown point,
+// and it goes untested by any symmetric fixture, where the mean and the median
+// coincide by construction.
+func TestTrailingRobustCentreResistsAnOutlier(t *testing.T) {
+	ref := steady(32)
+	ref[7] = 300 // one corrupted observation, two hundred units out
+
+	plain, _, ok := Trailing(32).Estimate(ref)
+	if !ok {
+		t.Fatal("Trailing reported false")
+	}
+	robust, _, ok := TrailingRobust(32).Estimate(ref)
+	if !ok {
+		t.Fatal("TrailingRobust reported false")
+	}
+
+	if math.Abs(robust-100) > 1 {
+		t.Errorf("TrailingRobust centre = %v; a median must barely move, want about 100", robust)
+	}
+	if math.Abs(plain-100) < 3 {
+		t.Errorf("Trailing centre = %v; a mean must have been dragged by the outlier", plain)
+	}
+	t.Logf("one outlier in the reference: mean centre %.2f, median centre %.2f", plain, robust)
 }
 
 // The reason TrailingRange exists: drift inside the reference period is

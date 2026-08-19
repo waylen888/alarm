@@ -137,6 +137,23 @@ func TestMeanMovingRangeIgnoresLevel(t *testing.T) {
 	t.Logf("adding a ramp: StdDev %.2f -> %.2f, MeanMovingRange %.2f -> %.2f", sdFlat, sdRamped, flat, ramped)
 }
 
+// Both scale constants are the whole point of their estimators, so asserting
+// a baseline's sigma against them proves nothing — the assertion and the
+// implementation move together. Pin them to their derivations instead.
+func TestScaleConstantsAreTheirTextbookValues(t *testing.T) {
+	// MAD converges to Φ⁻¹(0.75)·σ = 0.6745σ on normal data, so σ ≈ MAD/0.6745.
+	if want := 1 / 0.674489750196; math.Abs(MADScale-want) > 1e-5 {
+		t.Errorf("MADScale = %v, want 1/Φ⁻¹(0.75) = %v", MADScale, want)
+	}
+	// d2 for a subgroup of two: the expected range of two standard normals is
+	// E|X₁-X₂| = 2/√π = 1.12838. The constant carries the four significant
+	// figures the published control-chart tables give, so the tolerance here
+	// is that rounding and nothing more.
+	if want := 2 / math.Sqrt(math.Pi); math.Abs(MovingRangeScale-want) > 5e-4 {
+		t.Errorf("MovingRangeScale = %v, want 2/√π = %v", MovingRangeScale, want)
+	}
+}
+
 // One outlier moves StdDev a long way and MAD not at all. This is the whole
 // reason TrailingRobust exists.
 func TestMADResistsAnOutlier(t *testing.T) {

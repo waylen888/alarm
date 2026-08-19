@@ -93,6 +93,10 @@ func TestRule2(t *testing.T) {
 	onLine := repeat(9, 0.5)
 	onLine[4] = 0 // a point exactly on the centre is on neither side
 	wantIndices(t, check(onLine, Rule2))
+
+	onLineBelow := repeat(9, -0.5) // and it breaks a run below the line too
+	onLineBelow[4] = 0
+	wantIndices(t, check(onLineBelow, Rule2))
 }
 
 // Rule 3: six consecutive points all increasing or all decreasing.
@@ -102,8 +106,11 @@ func TestRule3(t *testing.T) {
 	wantIndices(t, check([]float64{0, 0.1, 0.2, 0.3, 0.4, 0.35}, Rule3)) // five rises, then a fall
 	wantIndices(t, check([]float64{0, 0.1, 0.2, 0.3, 0.4}, Rule3))       // five points
 
-	// A plateau is neither increasing nor decreasing and breaks the run.
+	// A plateau is neither increasing nor decreasing and breaks the run. Both
+	// directions: for a rising run the direction test rejects a zero step for
+	// free, so the explicit guard is load-bearing only for a falling one.
 	wantIndices(t, check([]float64{0, 0.1, 0.2, 0.2, 0.3, 0.4, 0.5}, Rule3))
+	wantIndices(t, check([]float64{0, -0.1, -0.2, -0.2, -0.3, -0.4, -0.5}, Rule3))
 }
 
 // Rule 4: fourteen consecutive points alternating up and down.
@@ -116,8 +123,14 @@ func TestRule4(t *testing.T) {
 	broken[7] = 0.6 // two rises in a row
 	wantIndices(t, check(broken, Rule4))
 
-	flat := alternate(14, 0.5)
-	flat[7] = flat[6] // an equal pair is no direction at all
+	// An equal pair is no direction at all. The fixture has to be chosen with
+	// care: a zero step surrounded by a rise and a fall breaks the run for a
+	// second reason, so dropping the guard would still refuse it and the test
+	// would pass without testing anything. Here the zero step sits where a
+	// fall belongs — steps are +,-,+,0,+,-,+,-,+,-,+,-,+ — so treating it as a
+	// fall, which is what happens when the guard is gone, leaves a perfectly
+	// alternating series.
+	flat := []float64{0, 1, 0, 1, 1, 2, 1, 2, 1, 2, 1, 2, 1, 2}
 	wantIndices(t, check(flat, Rule4))
 }
 
@@ -204,12 +217,22 @@ func TestCheckDefaultsToAllRules(t *testing.T) {
 	if got := len(Check(series, zero, one)); got == 0 {
 		t.Fatal("no rules named should mean all eight, but nothing fired")
 	}
+	// Naming none must apply all eight, not merely some. A series long enough
+	// for every rule to complete, chosen so each one does.
+	long := append(alternate(8, 1.5), 4.0) // rule 8 straddles the centre, then rule 1
+	long = append(long, alternate(14, 0.5)...)
+	long = append(long, []float64{0, 0.1, 0.2, 0.3, 0.4, 0.5}...)
+	long = append(long, repeat(15, 0.2)...)
+	long = append(long, repeat(9, 0.5)...)
+	long = append(long, 2.5, 2.5, 1.5, 1.5, 1.5, 1.5)
 	got := map[Rule]bool{}
-	for _, v := range Check(series, zero, one) {
+	for _, v := range Check(long, zero, one) {
 		got[v.Rule] = true
 	}
-	if !got[Rule2] {
-		t.Error("rule 2 should fire on nine points on one side")
+	for _, r := range AllRules() {
+		if !got[r] {
+			t.Errorf("%v never fired, so naming no rules did not apply all eight", r)
+		}
 	}
 }
 

@@ -13,9 +13,11 @@ import (
 const MADScale = 1.4826
 
 // MovingRangeScale converts a mean moving range into an estimate of the
-// standard deviation. It is the d2 constant for a subgroup of two, the
+// standard deviation. It is the d2 constant for a subgroup of two — the
 // expected range of two observations from a standard normal distribution,
-// so sigma is estimated as MR/1.128. The constant is what makes
+// E|X₁-X₂| = 2/√π = 1.12838 — carried to the four significant figures the
+// published control-chart tables give, so that a reader checking against a
+// table sees the same number. Sigma is estimated as MR/1.128. The constant is what makes
 // MeanMovingRange comparable to StdDev, and therefore usable as the
 // dispersion of a control chart whose limits are multiples of sigma.
 const MovingRangeScale = 1.128

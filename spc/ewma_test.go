@@ -48,6 +48,15 @@ func TestEWMAStatRejectsBadInput(t *testing.T) {
 	if _, ok := EWMAStat(nil, 0.2); ok {
 		t.Error("EWMAStat(nil) should report false")
 	}
+	// A non-finite observation, not just a non-finite lambda. Without the
+	// guard the statistic comes back NaN with ok true, and a NaN comparison
+	// in Breach is false — the condition goes blind rather than reporting it
+	// cannot judge.
+	for _, bad := range [][]float64{{1, math.NaN(), 3}, {1, math.Inf(1), 3}, {math.Inf(-1), 2}} {
+		if _, ok := EWMAStat(bad, 0.2); ok {
+			t.Errorf("EWMAStat over %v should report false", bad)
+		}
+	}
 }
 
 func TestEWMAControlLimits(t *testing.T) {
