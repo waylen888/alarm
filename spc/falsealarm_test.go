@@ -2,6 +2,7 @@ package spc
 
 import (
 	"math/rand"
+	"strconv"
 	"testing"
 )
 
@@ -103,26 +104,14 @@ func TestFalseAlarmRates(t *testing.T) {
 				if k == 0 {
 					return "never"
 				}
-				return itoa(evals / k)
+				return strconv.Itoa(evals / k)
 			}
 			perObs := "never"
 			if breaches > 0 {
-				perObs = itoa(evals / breaches)
+				perObs = strconv.Itoa(evals / breaches)
 			}
 			t.Logf("%-11s %-18s %10s %10s %10s %10s",
 				rs.name, bl.name, every(1), every(3), every(4), perObs)
 		}
 	}
-}
-
-func itoa(n int) string {
-	if n == 0 {
-		return "0"
-	}
-	var b []byte
-	for n > 0 {
-		b = append([]byte{byte('0' + n%10)}, b...)
-		n /= 10
-	}
-	return string(b)
 }

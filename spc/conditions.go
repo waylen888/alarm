@@ -130,7 +130,8 @@ func (c conditionBase) split(w alarm.Window) (test []float64, centre, sigma floa
 // nothing gets at least MinRefPoints.
 //
 // MinPoints is the largest Points() among the enabled rules plus the
-// reference size, so a Nelson(Trailing(50), 50, []Rule{Rule7}) condition declares 65.
+// reference size, so a Nelson(Trailing(50), 50, []Rule{Rule7}) condition
+// declares 65.
 // Getting that wrong yields a condition that never breaches, so the two are
 // added here rather than left to the caller.
 func Nelson(b Baseline, ref int, rules []Rule) alarm.Condition {
@@ -181,7 +182,7 @@ func (c nelson) Measure(w alarm.Window) float64 {
 // something else; fmt dispatches on the dynamic type, so it costs nothing to
 // have and shows up in any log line or test failure that prints the rule.
 func (c nelson) String() string {
-	return fmt.Sprintf("spc.Nelson(ref=%d, points=%d, []spc.Rule{rules=%v})", c.ref, c.test, c.rules)
+	return fmt.Sprintf("spc.Nelson(ref=%d, points=%d, rules=%v)", c.ref, c.test, c.rules)
 }
 
 // knownRules drops unknown rule identifiers, removes duplicates and returns
@@ -216,7 +217,8 @@ func knownRules(rules []Rule) []Rule {
 // the baseline. A baseline that declares a larger requirement of its own —
 // Trailing, TrailingRobust and TrailingRange all declare the n they were
 // built with — overrides it, because honouring the smaller number would
-// leave Estimate reporting false on every evaluation. So EWMA(Trailing(50), 10, ...) reads 50 reference observations, not 10. A baseline that declares
+// leave Estimate reporting false on every evaluation. So EWMA(Trailing(50),
+// 10, ...) reads 50 reference observations, not 10. A baseline that declares
 // nothing gets at least MinRefPoints.
 //
 // lambda selects how much history the statistic keeps, and MinPoints follows
