@@ -488,9 +488,3 @@ func seriesWindow(vals ...float64) alarm.Window {
 	}
 	return got
 }
-
-type conditionFunc func(alarm.Window) bool
-
-func (f conditionFunc) Breach(w alarm.Window) bool { return f(w) }
-
-func (f conditionFunc) MinPoints() int { return alarm.MaxWindowPoints }

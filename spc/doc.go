@@ -48,8 +48,9 @@
 // The consequence is not hidden: the statistic's memory is exactly the
 // window's length. An EWMA recomputed over the last N observations is not the
 // same number as an EWMA carried forward since the process started. For an
-// exponentially decaying statistic the difference is bounded by the weight of
-// the discarded history, (1-λ)^N, and EWMAMinPoints sizes the
+// exponentially decaying statistic the difference is the weight of the
+// discarded history, (1-λ)^N, times the gap between the seed and what the
+// statistic would have held before it, and EWMAMinPoints sizes the
 // window so that weight stays under EWMAResidualWeight — one percent. Below
 // that point count the statistic is measurably not the one it claims to be,
 // which is why MinPoints is derived from lambda rather than chosen.
@@ -222,21 +223,33 @@
 // 91.75, against 370.4 for a three-sigma limit alone. Nelson's eight include
 // those four and four more.
 //
-// Measured over 200,000 in-control observations of a normal process, judged
-// the way these conditions judge. The figure is observations per false alarm
-// episode — consecutive evaluations of a run-based rule share all but one
-// point, so one false alarm persists for several observations and an operator
-// sees one alert, not several. The For columns restrict that count to
-// episodes long enough to survive a Rule.For of that many sampling intervals.
-// The harness is TestFalseAlarmRates in this package; the numbers are
-// reproducible rather than quoted.
+// Measured over 200,000 in-control observations of one pseudo-random normal
+// series, judged the way these conditions judge. The figure is observations
+// per false alarm episode — consecutive evaluations of a run-based rule share
+// all but one point, so one false alarm persists for several observations and
+// an operator sees one alert, not several. The For columns restrict that
+// count to episodes long enough to survive a Rule.For of that many sampling
+// intervals.
+//
+// The harness is TestFalseAlarmRates in this package, and this table is its
+// golden file: it is compared cell by cell on every run and rewritten by
+// -update, so it cannot quietly go stale. The harness pins its seed, so the
+// figures are exact and repeatable rather than estimates. A different seed
+// moves them by a few percent, and by much more for anything that fires as
+// rarely as rule 8, so read them as orders of magnitude and as ratios between
+// rows. Nothing below depends on 47 rather than 49; it depends on 47 being an
+// order of magnitude below 347, on 65 to 47 being a factor of about 1.4, and
+// on the For columns being a factor of about ten.
 //
 //	rules      baseline             For=0   For=2   For=3
 //	rule 1     Fixed                  347   never   never
 //	rule 1     Trailing(50)           215   never   never
 //	rule 1     Trailing(200)          304   never   never
 //	rule 1     TrailingRange(50)      186   never   never
+//	rules 1,2  Fixed                  209    2149    3702
 //	rules 1,2  Trailing(50)           131    1438    2701
+//	rules 1,2  Trailing(200)          184    1939    3386
+//	rules 1,2  TrailingRange(50)      122    1428    2701
 //	all eight  Fixed                   65     552     980
 //	all eight  Trailing(50)            47     393     727
 //	all eight  Trailing(200)           61     498     908
@@ -247,9 +260,10 @@
 // The rule set dominates. All eight against a perfectly known baseline still
 // false-alarms once every 65 observations, against 347 for rule 1 on the same
 // baseline. Estimating the baseline costs a further factor of about 1.4
-// (65 to 47), and raising the reference size to 200 — the order Quesenberry
-// (Journal of Quality Technology 25(4), 1993) puts the recovery of
-// known-parameter behaviour at — recovers most but not all of it. Check
+// (65 to 47), and raising the reference size to 200 — Quesenberry (Journal of
+// Quality Technology 25(4), 1993) puts the recovery of known-parameter
+// behaviour at the order of several hundred observations — recovers most but
+// not all of it. Check
 // applies all eight when the caller names none, so the shortest call to it is
 // also the noisiest; Nelson takes its rules as a required argument and cannot
 // be called that way.
